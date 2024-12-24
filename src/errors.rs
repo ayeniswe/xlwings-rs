@@ -3,6 +3,9 @@ use thiserror::Error;
 /// Hiearchy of the entire crate's error types
 #[derive(Error, Debug)]
 pub enum XcelmateError {
+    #[error("styles.xml is missing")]
+    StylesMissing,
+
     /// Stream reading has reached the end so more than likely enclosed tags are incorrect or missing
     #[error("malformed stream for tag: {0}")]
     XmlEof(String),

@@ -1,6 +1,5 @@
-//! The module holds all logic to fully deserialize a .xlsx file and its contents
-use super::utils::xml_reader;
-use crate::errors::XcelmateError;
+//! The module holds all logic to fully deserialize the sharedStrings.xml in the .xlsx file
+use crate::{errors::XcelmateError, stream::utils::xml_reader};
 use quick_xml::{
     events::{attributes::Attribute, Event},
     name::QName,
@@ -10,8 +9,12 @@ use std::{
     borrow::Cow,
     collections::HashMap,
     io::{BufReader, Read, Seek},
+    sync::Arc,
 };
 use zip::{read::ZipFile, ZipArchive};
+
+type Key = usize;
+type SharedStringRef = Arc<SharedString>;
 
 /// The `Rgb` promotes better api usage with hexadecimal coloring
 #[derive(Debug, PartialEq, Clone, Eq, PartialOrd, Hash, Ord)]
@@ -66,15 +69,15 @@ enum StringType {
     NoPreserve(String),
 }
 
-/// The `TextType` represents either a rich text or plaintext string and needs
+/// The `SharedString` represents either a rich text or plaintext string and needs
 /// to track ref counts to handle removal.
 #[derive(Debug, PartialEq, Eq, Clone, PartialOrd, Hash, Ord)]
-enum TextType {
+enum SharedString {
     RichText(Vec<StringPiece>),
     PlainText(StringType),
 }
 
-/// The `StringPiece` represents a string that is contained in a richtext denoted by having a `TextType::RichText`.
+/// The `StringPiece` represents a string that is contained in a richtext denoted by having a `SharedString::RichText`.
 /// The pieces of text can be with styling or no styling
 #[derive(Debug, PartialEq, Clone, Eq, PartialOrd, Hash, Ord)]
 struct StringPiece {
@@ -90,26 +93,19 @@ struct StringPiece {
 ///
 /// **Note**: rich text will always have atleast greater than one `StringItem` and plain text will only have a single `StringItem`
 #[derive(Default)]
-struct SharedStringTable {
-    table: HashMap<TextType, usize>,
-    /// Allows lookups with integer reference and tracks reference counter
-    reverse_table: HashMap<usize, u32>,
+pub(crate) struct SharedStringTable {
+    table: HashMap<SharedStringRef, Key>,
+    reverse_table: HashMap<Key, SharedStringRef>,
     count: u32,
 }
 
-/// The `Xlsx` struct represents an Excel workbook stored in an OpenXML format (XLSX).
-/// It encapsulates foundational pieces of a workbook
-struct Xlsx<RS> {
-    /// The zip archive containing all files of the XLSX workbook.
-    zip: ZipArchive<RS>,
-    /// The shared string table for efficient mapping of shared strings.
-    shared_string_table: SharedStringTable,
-}
-
-// Ported from calamine https://github.com/tafia/calamine/tree/master
-impl<RS: Read + Seek> Xlsx<RS> {
-    fn read_shared_strings(&mut self) -> Result<(), XcelmateError> {
-        let mut xml = match xml_reader(&mut self.zip, "xl/sharedStrings.xml") {
+impl SharedStringTable {
+    // Ported from calamine https://github.com/tafia/calamine/tree/master
+    pub(crate) fn read_shared_strings<'a, RS: Read + Seek>(
+        &mut self,
+        zip: &'a mut ZipArchive<RS>,
+    ) -> Result<(), XcelmateError> {
+        let mut xml = match xml_reader(zip, "xl/sharedStrings.xml") {
             None => return Ok(()),
             Some(x) => x?,
         };
@@ -123,8 +119,7 @@ impl<RS: Read + Seek> Xlsx<RS> {
                         if let Ok(a) = attr {
                             match a.key {
                                 QName(b"count") => {
-                                    self.shared_string_table.count =
-                                        a.unescape_value()?.to_string().parse::<u32>()?
+                                    self.count = a.unescape_value()?.to_string().parse::<u32>()?
                                 }
                                 // We dont care about unique count since that will be the len() of the table in SharedStringTable
                                 _ => (),
@@ -133,9 +128,10 @@ impl<RS: Read + Seek> Xlsx<RS> {
                     }
                 }
                 Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"si" => {
-                    if let Some(s) = Xlsx::<RS>::read_string(&mut xml, e.name())? {
-                        self.shared_string_table.table.insert(s.clone(), idx);
-                        self.shared_string_table.reverse_table.insert(idx, 1);
+                    if let Some(s) = SharedStringTable::read_string(&mut xml, e.name())? {
+                        let text = Arc::new(s);
+                        self.reverse_table.insert(idx, text.clone());
+                        self.table.insert(text, idx);
                         idx += 1;
                     }
                 }
@@ -148,14 +144,15 @@ impl<RS: Read + Seek> Xlsx<RS> {
         Ok(())
     }
 
+    // Ported from calamine https://github.com/tafia/calamine/tree/master
     /// Read either a simple or richtext string
     fn read_string(
         xml: &mut Reader<BufReader<ZipFile>>,
         QName(closing): QName,
-    ) -> Result<Option<TextType>, XcelmateError> {
+    ) -> Result<Option<SharedString>, XcelmateError> {
         let mut buf = Vec::with_capacity(1024);
         let mut val_buf = Vec::with_capacity(1024);
-        let mut rich_buffer: Option<TextType> = None;
+        let mut rich_buffer: Option<SharedString> = None;
         let mut is_phonetic_text = false;
         let mut props: Option<RichTextProperty> = None;
         let mut preserve = false;
@@ -165,7 +162,7 @@ impl<RS: Read + Seek> Xlsx<RS> {
                 Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"r" => {
                     if rich_buffer.is_none() {
                         // Use a buffer since richtext has multiples <r> and <t> for the same cell
-                        rich_buffer = Some(TextType::RichText(Vec::new()));
+                        rich_buffer = Some(SharedString::RichText(Vec::new()));
                     }
                 }
                 Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"rPr" => {
@@ -330,7 +327,7 @@ impl<RS: Read + Seek> Xlsx<RS> {
                             }
                         };
                         match s {
-                            TextType::RichText(pieces) => pieces.push(value),
+                            SharedString::RichText(pieces) => pieces.push(value),
                             _ => (),
                         }
 
@@ -342,9 +339,11 @@ impl<RS: Read + Seek> Xlsx<RS> {
                         xml.read_to_end_into(QName(closing), &mut val_buf)?;
 
                         if preserve {
-                            return Ok(Some(TextType::PlainText(StringType::Preserve(value))));
+                            return Ok(Some(SharedString::PlainText(StringType::Preserve(value))));
                         } else {
-                            return Ok(Some(TextType::PlainText(StringType::NoPreserve(value))));
+                            return Ok(Some(SharedString::PlainText(StringType::NoPreserve(
+                                value,
+                            ))));
                         }
                     }
                 }
@@ -357,52 +356,54 @@ impl<RS: Read + Seek> Xlsx<RS> {
 
     /// Decrement the total count of all strings creation
     fn decrement_count(&mut self) {
-        if self.shared_string_table.count > 0 {
-            self.shared_string_table.count -= 1;
+        if self.count > 0 {
+            self.count -= 1;
         }
     }
 
     /// Increment the total count of all strings creation
     fn increment_count(&mut self) {
-        self.shared_string_table.count += 1;
+        self.count += 1;
+    }
+
+    /// Get the total count of all strings creation
+    fn count(&self) -> u32 {
+        self.count
     }
 
     /// Get the unique count
     fn unique_count(&self) -> usize {
-        self.shared_string_table.table.len()
+        self.table.len()
     }
 
-    /// Get the shared string integer ref
-    pub(crate) fn shared_string_ref(&mut self, item: TextType) -> usize {
-        self.add_to_table(item)
+    /// Get the shared string ref
+    pub(crate) fn shared_string_ref(&mut self, item: SharedString) -> Option<SharedStringRef> {
+        self.increment_count();
+        if let Some(i) = self.table.get(&item) {
+            Some(self.reverse_table.get(i).unwrap().clone())
+        } else {
+            None
+        }
     }
 
-    /// Increment the shared string reference counter
-    fn increment_shared_string_ref(&mut self, int_ref: usize) {
-        if let Some(ref_counter) = self.shared_string_table.reverse_table.get_mut(&int_ref) {
-            *ref_counter += 1;
+    /// Get the shared string from key
+    pub(crate) fn get_shared_string_ref_from_key(&mut self, key: Key) -> Option<SharedStringRef> {
+        self.count += 1;
+        if let Some(i) = self.reverse_table.get(&key) {
+            Some(i.clone())
+        } else {
+            None
         }
     }
 
     /// As every string is added, the shared table must reflect the changes in count
-    fn add_to_table(&mut self, item: TextType) -> usize {
-        let mut int_ref = 0;
-        if let Some(i) = self.shared_string_table.table.get(&item) {
-            int_ref = *i;
-            // We have to keep track of update to references
-            *self
-                .shared_string_table
-                .reverse_table
-                .get_mut(&int_ref)
-                .unwrap() += 1
-        } else {
-            int_ref = self.unique_count();
-            self.shared_string_table.table.insert(item, int_ref);
-            // References should only be 1 for a new item
-            self.shared_string_table.reverse_table.insert(int_ref, 1);
-        }
-        self.shared_string_table.count += 1;
-        int_ref
+    pub(crate) fn add_to_table(&mut self, item: SharedString) -> SharedStringRef {
+        self.increment_count();
+        let int_ref = self.unique_count();
+        let item = Arc::new(item);
+        self.reverse_table.insert(int_ref, item.clone());
+        self.table.insert(item.clone(), int_ref);
+        item
     }
 
     /// As every string is removed, the shared table must reflect the changes in count.
@@ -411,36 +412,23 @@ impl<RS: Read + Seek> Xlsx<RS> {
     /// # Returns
     /// The new `ref_count` or `None` if already has been removed.
     /// A `ref_count` of `Some(0)` denotes the entry has just been removed
-    pub(crate) fn remove_from_table(&mut self, item: TextType) -> Option<u32> {
-        let mut remove = false;
-        if let Some(int_ref) = self.shared_string_table.table.get(&item) {
-            let ref_counter = self.shared_string_table.reverse_table.get(int_ref).unwrap();
-            if *ref_counter == 1 {
-                remove = true
-            }
-        }
-
+    pub(crate) fn remove_from_table(&mut self, item: SharedString) -> Option<usize> {
         self.decrement_count();
+        if let Some(key) = self.table.get(&item) {
+            let shared_string_ref = self.reverse_table.get(key).unwrap();
+            let count = Arc::strong_count(shared_string_ref);
 
-        if remove {
-            if let Some(int_ref) = self.shared_string_table.table.remove(&item) {
-                self.shared_string_table.reverse_table.remove(&int_ref);
+            // 2 count since both hashmaps hold ref to shared string
+            const TABLE_COUNT: usize = 2;
+            if count == TABLE_COUNT {
+                let int_ref = self.table.remove(&item).unwrap();
+                self.reverse_table.remove(&int_ref);
                 Some(0)
             } else {
-                None
+                Some(count - TABLE_COUNT)
             }
         } else {
-            if let Some(int_ref) = self.shared_string_table.table.get(&item) {
-                let ref_counter = self
-                    .shared_string_table
-                    .reverse_table
-                    .get_mut(&int_ref)
-                    .unwrap();
-                *ref_counter -= 1;
-                Some(ref_counter.clone())
-            } else {
-                None
-            }
+            None
         }
     }
 }
@@ -448,18 +436,25 @@ impl<RS: Read + Seek> Xlsx<RS> {
 #[cfg(test)]
 mod shared_string_api {
     use crate::stream::xlsx::{
-        Color, Rgb, RichTextProperty, SharedStringTable, StringPiece, StringType, TextType, Xlsx,
+        shared_string_table::{
+            Color, Rgb, RichTextProperty, SharedString, SharedStringTable, StringPiece, StringType,
+        },
+        Xlsx,
     };
-    use std::fs::File;
+    use std::{fs::File, sync::Arc};
     use zip::ZipArchive;
+
+    fn init(path: &str) -> SharedStringTable {
+        let file = File::open(path).unwrap();
+        let mut zip = ZipArchive::new(file).unwrap();
+        let mut sst = SharedStringTable::default();
+        sst.read_shared_strings(&mut zip).unwrap();
+        sst
+    }
 
     #[test]
     fn query_richtext_match() {
-        let file = File::open("tests/workbook01.xlsx").unwrap();
-        let mut xlsx = Xlsx {
-            zip: ZipArchive::new(file).unwrap(),
-            shared_string_table: SharedStringTable::default(),
-        };
+        let mut sst = init("tests/workbook01.xlsx");
         let pieces = vec![
             StringPiece {
                 props: None,
@@ -623,32 +618,16 @@ mod shared_string_api {
                 value: StringType::NoPreserve("here".into()),
             },
         ];
-        xlsx.read_shared_strings().unwrap();
-
-        // Item should exist
-        let actual = xlsx
-            .shared_string_table
-            .table
-            .get(&TextType::RichText(pieces.clone()));
-        assert_eq!(actual, Some(&0));
-
-        // Item should be of type rich text
-        let actual = xlsx
-            .shared_string_table
-            .table
-            .keys()
-            .into_iter()
-            .collect::<Vec<&TextType>>();
-        assert_eq!(*actual[0], TextType::RichText(pieces))
+        // Item should already exist
+        let actual = sst
+            .shared_string_ref(SharedString::RichText(pieces.clone()))
+            .unwrap();
+        assert_eq!(Arc::strong_count(&actual), 3);
     }
 
     #[test]
     fn query_richtext_no_match() {
-        let file = File::open("tests/workbook01.xlsx").unwrap();
-        let mut xlsx = Xlsx {
-            zip: ZipArchive::new(file).unwrap(),
-            shared_string_table: SharedStringTable::default(),
-        };
+        let mut sst = init("tests/workbook01.xlsx");
         let pieces = vec![
             StringPiece {
                 props: None,
@@ -812,140 +791,94 @@ mod shared_string_api {
                 value: StringType::NoPreserve("here".into()),
             },
         ];
-        xlsx.read_shared_strings().unwrap();
 
         // Item should not exist
-        let actual = xlsx
-            .shared_string_table
-            .table
-            .get(&TextType::RichText(pieces.clone()));
+        let actual = sst.shared_string_ref(SharedString::RichText(pieces.clone()));
         assert_eq!(actual, None);
     }
 
     #[test]
     fn query_plaintext_no_match() {
-        let file = File::open("tests/workbook02.xlsx").unwrap();
-        let mut xlsx = Xlsx {
-            zip: ZipArchive::new(file).unwrap(),
-            shared_string_table: SharedStringTable::default(),
-        };
-        let key = TextType::PlainText(StringType::Preserve("The".into()));
-        xlsx.read_shared_strings().unwrap();
+        let mut sst = init("tests/workbook01.xlsx");
 
         // Item should not exist
-        let actual = xlsx.shared_string_table.table.get(&key);
+        let actual =
+            sst.shared_string_ref(SharedString::PlainText(StringType::Preserve("The".into())));
         assert_eq!(actual, None);
     }
 
     #[test]
     fn query_plaintext_match() {
-        let file = File::open("tests/workbook02.xlsx").unwrap();
-        let mut xlsx = Xlsx {
-            zip: ZipArchive::new(file).unwrap(),
-            shared_string_table: SharedStringTable::default(),
-        };
-        let key = TextType::PlainText(StringType::Preserve("The ".into()));
-        xlsx.read_shared_strings().unwrap();
+        let mut sst = init("tests/workbook02.xlsx");
 
         // Item should exist
-        let actual = xlsx.shared_string_table.table.get(&key);
-        assert_eq!(actual, Some(&0));
-
-        // Item should be of type plain text
-        let actual = xlsx
-            .shared_string_table
-            .table
-            .keys()
-            .into_iter()
-            .collect::<Vec<&TextType>>();
-        assert_eq!(
-            *actual[0],
-            TextType::PlainText(StringType::Preserve("The ".into()))
-        )
+        let actual = sst
+            .shared_string_ref(SharedString::PlainText(StringType::Preserve("The ".into())))
+            .unwrap();
+        assert_eq!(Arc::strong_count(&actual), 3);
     }
 
     #[test]
     fn table_count_is_deserialized() {
-        let file = File::open("tests/workbook02.xlsx").unwrap();
-        let mut xlsx = Xlsx {
-            zip: ZipArchive::new(file).unwrap(),
-            shared_string_table: SharedStringTable::default(),
-        };
-        xlsx.read_shared_strings().unwrap();
+        let sst = init("tests/workbook02.xlsx");
 
         // Count should increment
-        let actual = xlsx.shared_string_table.count;
+        let actual = sst.count();
         assert_eq!(actual, 1);
     }
 
     #[test]
     fn add_new_shared_string_to_table() {
-        let file = File::open("tests/workbook02.xlsx").unwrap();
-        let mut xlsx = Xlsx {
-            zip: ZipArchive::new(file).unwrap(),
-            shared_string_table: SharedStringTable::default(),
-        };
-        xlsx.read_shared_strings().unwrap();
-        let item = TextType::PlainText(StringType::NoPreserve("The".into()));
+        let mut sst = init("tests/workbook02.xlsx");
+        let item = SharedString::PlainText(StringType::NoPreserve("The".into()));
 
         // Should add a new item
-        let actual = xlsx.shared_string_ref(item);
-        assert_eq!(actual, 1);
+        let actual = sst.add_to_table(item);
+        assert_eq!(Arc::strong_count(&actual), 3);
 
         // Total count should be incremented
-        let actual = xlsx.shared_string_table.count;
+        let actual = sst.count();
         assert_eq!(actual, 2);
-    }
-
-    #[test]
-    fn add_shared_string_to_table_no_duplicates() {
-        let file = File::open("tests/workbook02.xlsx").unwrap();
-        let mut xlsx = Xlsx {
-            zip: ZipArchive::new(file).unwrap(),
-            shared_string_table: SharedStringTable::default(),
-        };
-        xlsx.read_shared_strings().unwrap();
-        let item = TextType::PlainText(StringType::Preserve("The ".into()));
-
-        // Should not readd item that exists already
-        let actual = xlsx.shared_string_ref(item);
-        assert_eq!(actual, 0);
-
-        // Total count should be incremented
-        let actual = xlsx.shared_string_table.count;
-        assert_eq!(actual, 2);
-
-        // Reference count should be incremented
-        let actual = xlsx.shared_string_table.reverse_table.get(&0).unwrap();
-        assert_eq!(actual, &2);
     }
 
     #[test]
     fn remove_shared_string_from_table() {
-        let file = File::open("tests/workbook02.xlsx").unwrap();
-        let mut xlsx = Xlsx {
-            zip: ZipArchive::new(file).unwrap(),
-            shared_string_table: SharedStringTable::default(),
-        };
-        xlsx.read_shared_strings().unwrap();
-        let item = TextType::PlainText(StringType::Preserve("The ".into()));
+        let mut sst = init("tests/workbook02.xlsx");
+        let item = SharedString::PlainText(StringType::Preserve("The ".into()));
 
         // Should give zero ref count since removed
-        let actual = xlsx.remove_from_table(item.clone());
+        let actual = sst.remove_from_table(item.clone());
         assert_eq!(actual, Some(0));
 
-        // Table should be all empty
-        let ref_counter_table = xlsx.shared_string_table.reverse_table.keys().len();
-        let shared_string_table = xlsx.shared_string_table.table.keys().len();
-        assert_eq!(ref_counter_table, 0);
-        assert_eq!(shared_string_table, 0);
-
-        // Total count should be decremented
-        let actual = xlsx.shared_string_table.count;
+        // Total count should be empty
+        let actual = sst.count();
         assert_eq!(actual, 0);
-        
+
         // Should no longer exist
-        let actual = xlsx.remove_from_table(item);
+        let actual = sst.remove_from_table(item);
         assert_eq!(actual, None);
+    }
+
+    #[test]
+    fn do_not_remove_shared_string_from_table_when_ref_exists() {
+        let mut sst = init("tests/workbook02.xlsx");
+        let item = SharedString::PlainText(StringType::Preserve("The ".into()));
+
+        {
+            // Should show one ref exists still
+            let shared_string_ref = sst
+                .get_shared_string_ref_from_key(0)
+                .unwrap();
+            let actual = sst.remove_from_table(item.clone());
+            assert_eq!(actual, Some(1));
+
+            // Total count should not empty
+            let actual = sst.count();
+            assert_eq!(actual, 1);
+        }
+
+        // Should no longer exist after drop
+        let actual = sst.remove_from_table(item);
+        assert_eq!(actual, Some(0));
     }
 }
