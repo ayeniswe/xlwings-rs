@@ -4,6 +4,8 @@ use quick_xml::Reader;
 use zip::{read::ZipFile, result::ZipError, ZipArchive};
 use crate::errors::XcelmateError;
 
+pub (crate) type Key = usize;
+
 // ported from calamine https://github.com/tafia/calamine/tree/master
 pub (crate) fn xml_reader<'a, RS: Read + Seek>(
     zip: &'a mut ZipArchive<RS>,

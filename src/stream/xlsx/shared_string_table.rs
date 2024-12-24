@@ -1,5 +1,5 @@
 //! The module holds all logic to fully deserialize the sharedStrings.xml in the .xlsx file
-use crate::{errors::XcelmateError, stream::utils::xml_reader};
+use crate::{errors::XcelmateError, stream::utils::{xml_reader, Key}};
 use quick_xml::{
     events::{attributes::Attribute, Event},
     name::QName,
@@ -13,51 +13,9 @@ use std::{
 };
 use zip::{read::ZipFile, ZipArchive};
 
-type Key = usize;
+use super::stylesheet::{Color, FontProperty, Rgb};
+
 type SharedStringRef = Arc<SharedString>;
-
-/// The `Rgb` promotes better api usage with hexadecimal coloring
-#[derive(Debug, PartialEq, Clone, Eq, PartialOrd, Hash, Ord)]
-enum Rgb {
-    Custom((u8, u8, u8)),
-}
-
-/// The `Color` denotes the type of coloring system to
-/// use since excel has builtin coloring to choose that will map to `theme` but
-/// for custom specfic coloring `rgb` is used
-///
-/// Default is `Theme((1, None))` = black
-#[derive(Debug, PartialEq, Clone, Eq, PartialOrd, Hash, Ord)]
-enum Color {
-    /// Builtin theme from excel color palette selector which includes theme id and tint value
-    Theme { id: u32, tint: Option<String> },
-    /// RGB color model
-    Rgb(Rgb),
-}
-impl Default for Color {
-    fn default() -> Self {
-        Color::Theme { id: 1, tint: None }
-    }
-}
-
-/// The `RichTextProperty` denotes all styling options
-/// that can be added to text
-#[derive(Debug, Default, Clone, PartialEq, Eq, PartialOrd, Hash, Ord)]
-struct RichTextProperty {
-    bold: bool,
-    underline: bool,
-    /// Double underline
-    double: bool,
-    italic: bool,
-    size: String,
-    color: Color,
-    /// Font type
-    font: String,
-    /// Font family
-    family: u32,
-    /// Font scheme
-    scheme: String,
-}
 
 /// The `StringType` allows to differentiate between some strings that could
 /// have leading and trailing spaces
@@ -82,7 +40,7 @@ enum SharedString {
 #[derive(Debug, PartialEq, Clone, Eq, PartialOrd, Hash, Ord)]
 struct StringPiece {
     /// The styling applied to text
-    props: Option<RichTextProperty>,
+    props: Option<FontProperty>,
     // The actual raw value of text
     value: StringType,
 }
@@ -110,7 +68,7 @@ impl SharedStringTable {
             Some(x) => x?,
         };
         let mut buf = Vec::with_capacity(1024);
-        let mut idx = 0; // Track index for referencing updates, etc
+        let mut idx: usize = 0; // Track index for referencing updates, etc
         loop {
             buf.clear();
             match xml.read_event_into(&mut buf) {
@@ -154,7 +112,7 @@ impl SharedStringTable {
         let mut val_buf = Vec::with_capacity(1024);
         let mut rich_buffer: Option<SharedString> = None;
         let mut is_phonetic_text = false;
-        let mut props: Option<RichTextProperty> = None;
+        let mut props: Option<FontProperty> = None;
         let mut preserve = false;
         loop {
             buf.clear();
@@ -167,7 +125,7 @@ impl SharedStringTable {
                 }
                 Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"rPr" => {
                     if props.is_none() {
-                        props = Some(RichTextProperty::default());
+                        props = Some(FontProperty::default());
                     }
                 }
                 Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"rPh" => {
@@ -285,12 +243,6 @@ impl SharedStringTable {
                         }
                     }
                 }
-                Ok(Event::End(ref e)) if e.local_name().as_ref() == closing => {
-                    return Ok(rich_buffer);
-                }
-                Ok(Event::End(ref e)) if e.local_name().as_ref() == b"rPh" => {
-                    is_phonetic_text = false;
-                }
                 Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"t" && !is_phonetic_text => {
                     val_buf.clear();
                     let mut value = String::new();
@@ -347,6 +299,12 @@ impl SharedStringTable {
                         }
                     }
                 }
+                Ok(Event::End(ref e)) if e.local_name().as_ref() == closing => {
+                    return Ok(rich_buffer);
+                }
+                Ok(Event::End(ref e)) if e.local_name().as_ref() == b"rPh" => {
+                    is_phonetic_text = false;
+                }
                 Ok(Event::Eof) => return Err(XcelmateError::XmlEof("".into())),
                 Err(e) => return Err(XcelmateError::Xml(e)),
                 _ => (),
@@ -386,7 +344,7 @@ impl SharedStringTable {
         }
     }
 
-    /// Get the shared string from key
+    /// Get the shared string ref from key
     pub(crate) fn get_shared_string_ref_from_key(&mut self, key: Key) -> Option<SharedStringRef> {
         self.count += 1;
         if let Some(i) = self.reverse_table.get(&key) {
@@ -407,11 +365,12 @@ impl SharedStringTable {
     }
 
     /// As every string is removed, the shared table must reflect the changes in count.
-    /// Shared strings can ONLY be removed when `ref_count` is `0`
+    /// Shared strings can ONLY be removed when smart pointer count is `2`. The pointer will always have atleast `2` counts since
+    /// at load time we keep a pointer in two hashmaps to support bidirectional access
     ///
     /// # Returns
-    /// The new `ref_count` or `None` if already has been removed.
-    /// A `ref_count` of `Some(0)` denotes the entry has just been removed
+    /// The new smart pointer count or `None` if already has been removed.
+    /// A return value of `Some(0)` indicates the entry has been removed from both tables
     pub(crate) fn remove_from_table(&mut self, item: SharedString) -> Option<usize> {
         self.decrement_count();
         if let Some(key) = self.table.get(&item) {
@@ -437,7 +396,7 @@ impl SharedStringTable {
 mod shared_string_api {
     use crate::stream::xlsx::{
         shared_string_table::{
-            Color, Rgb, RichTextProperty, SharedString, SharedStringTable, StringPiece, StringType,
+            Color, Rgb, FontProperty, SharedString, SharedStringTable, StringPiece, StringType,
         },
         Xlsx,
     };
@@ -461,7 +420,7 @@ mod shared_string_api {
                 value: StringType::Preserve("The ".into()),
             },
             StringPiece {
-                props: Some(RichTextProperty {
+                props: Some(FontProperty {
                     bold: true,
                     underline: true,
                     double: false,
@@ -475,7 +434,7 @@ mod shared_string_api {
                 value: StringType::NoPreserve("big".into()),
             },
             StringPiece {
-                props: Some(RichTextProperty {
+                props: Some(FontProperty {
                     bold: true,
                     underline: false,
                     double: false,
@@ -489,7 +448,7 @@ mod shared_string_api {
                 value: StringType::Preserve(" example".into()),
             },
             StringPiece {
-                props: Some(RichTextProperty {
+                props: Some(FontProperty {
                     bold: false,
                     underline: false,
                     double: false,
@@ -503,7 +462,7 @@ mod shared_string_api {
                 value: StringType::Preserve(" ".into()),
             },
             StringPiece {
-                props: Some(RichTextProperty {
+                props: Some(FontProperty {
                     bold: false,
                     underline: false,
                     double: false,
@@ -517,7 +476,7 @@ mod shared_string_api {
                 value: StringType::Preserve("of ".into()),
             },
             StringPiece {
-                props: Some(RichTextProperty {
+                props: Some(FontProperty {
                     bold: false,
                     underline: true,
                     double: false,
@@ -531,7 +490,7 @@ mod shared_string_api {
                 value: StringType::NoPreserve("some".into()),
             },
             StringPiece {
-                props: Some(RichTextProperty {
+                props: Some(FontProperty {
                     bold: false,
                     underline: false,
                     double: false,
@@ -545,7 +504,7 @@ mod shared_string_api {
                 value: StringType::Preserve(" ".into()),
             },
             StringPiece {
-                props: Some(RichTextProperty {
+                props: Some(FontProperty {
                     bold: false,
                     underline: false,
                     double: false,
@@ -562,7 +521,7 @@ mod shared_string_api {
                 value: StringType::NoPreserve("rich".into()),
             },
             StringPiece {
-                props: Some(RichTextProperty {
+                props: Some(FontProperty {
                     bold: false,
                     underline: false,
                     double: false,
@@ -576,7 +535,7 @@ mod shared_string_api {
                 value: StringType::Preserve(" ".into()),
             },
             StringPiece {
-                props: Some(RichTextProperty {
+                props: Some(FontProperty {
                     bold: false,
                     underline: false,
                     double: true,
@@ -590,7 +549,7 @@ mod shared_string_api {
                 value: StringType::NoPreserve("text".into()),
             },
             StringPiece {
-                props: Some(RichTextProperty {
+                props: Some(FontProperty {
                     bold: false,
                     underline: false,
                     double: false,
@@ -604,7 +563,7 @@ mod shared_string_api {
                 value: StringType::Preserve(" ".into()),
             },
             StringPiece {
-                props: Some(RichTextProperty {
+                props: Some(FontProperty {
                     bold: false,
                     underline: false,
                     double: false,
@@ -634,7 +593,7 @@ mod shared_string_api {
                 value: StringType::Preserve("The ".into()),
             },
             StringPiece {
-                props: Some(RichTextProperty {
+                props: Some(FontProperty {
                     bold: true,
                     underline: true,
                     double: false,
@@ -648,7 +607,7 @@ mod shared_string_api {
                 value: StringType::NoPreserve("big".into()),
             },
             StringPiece {
-                props: Some(RichTextProperty {
+                props: Some(FontProperty {
                     bold: true,
                     underline: false,
                     double: false,
@@ -662,7 +621,7 @@ mod shared_string_api {
                 value: StringType::Preserve(" example".into()),
             },
             StringPiece {
-                props: Some(RichTextProperty {
+                props: Some(FontProperty {
                     bold: false,
                     underline: false,
                     double: false,
@@ -676,7 +635,7 @@ mod shared_string_api {
                 value: StringType::Preserve(" ".into()),
             },
             StringPiece {
-                props: Some(RichTextProperty {
+                props: Some(FontProperty {
                     bold: false,
                     underline: false,
                     double: false,
@@ -690,7 +649,7 @@ mod shared_string_api {
                 value: StringType::Preserve("of ".into()),
             },
             StringPiece {
-                props: Some(RichTextProperty {
+                props: Some(FontProperty {
                     bold: false,
                     underline: true,
                     double: false,
@@ -704,7 +663,7 @@ mod shared_string_api {
                 value: StringType::NoPreserve("some".into()),
             },
             StringPiece {
-                props: Some(RichTextProperty {
+                props: Some(FontProperty {
                     bold: false,
                     underline: false,
                     double: false,
@@ -718,7 +677,7 @@ mod shared_string_api {
                 value: StringType::Preserve(" ".into()),
             },
             StringPiece {
-                props: Some(RichTextProperty {
+                props: Some(FontProperty {
                     bold: false,
                     underline: false,
                     double: false,
@@ -735,7 +694,7 @@ mod shared_string_api {
                 value: StringType::NoPreserve("rich".into()),
             },
             StringPiece {
-                props: Some(RichTextProperty {
+                props: Some(FontProperty {
                     bold: false,
                     underline: false,
                     double: false,
@@ -749,7 +708,7 @@ mod shared_string_api {
                 value: StringType::Preserve(" ".into()),
             },
             StringPiece {
-                props: Some(RichTextProperty {
+                props: Some(FontProperty {
                     bold: false,
                     underline: false,
                     double: true,
@@ -763,7 +722,7 @@ mod shared_string_api {
                 value: StringType::NoPreserve("text".into()),
             },
             StringPiece {
-                props: Some(RichTextProperty {
+                props: Some(FontProperty {
                     bold: false,
                     underline: false,
                     double: false,
@@ -777,7 +736,7 @@ mod shared_string_api {
                 value: StringType::Preserve(" ".into()),
             },
             StringPiece {
-                props: Some(RichTextProperty {
+                props: Some(FontProperty {
                     bold: false,
                     underline: false,
                     double: false,
