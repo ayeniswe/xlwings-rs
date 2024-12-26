@@ -80,13 +80,35 @@ struct Fill {
 /// The type of line styling for a border
 #[derive(Debug, PartialEq, Default, Clone, Eq, PartialOrd, Hash, Ord)]
 enum BorderStyle {
+    /// No border
     #[default]
     None,
+    /// Thin border
     Thin,
+    /// Medium border
     Medium,
+    /// Thick border
     Thick,
+    /// Double line border
     Double,
-    // FILL THE MISSING - TODO
+    /// Dashed border
+    Dashed,
+    /// Dotted border
+    Dotted,
+    /// Dash-dot border
+    DashDot,
+    /// Dash-dot-dot border
+    DashDotDot,
+    /// Slant dash-dot border
+    SlantDashDot,
+    /// Hairline border
+    Hair,
+    /// Medium dashed border
+    MediumDashed,
+    /// Medium dash-dot border
+    MediumDashDot,
+    /// Medium dash-dot-dot border
+    MediumDashDotDot,
 }
 
 /// The border region to apply styling to
@@ -434,11 +456,31 @@ impl Stylesheet {
                                 QName(b"style") => {
                                     let val = a.unescape_value()?.to_string();
                                     match val.as_str() {
-                                        "thick" => border_region.style = BorderStyle::Thick,
+                                        "none" => border_region.style = BorderStyle::None,
                                         "thin" => border_region.style = BorderStyle::Thin,
                                         "medium" => border_region.style = BorderStyle::Medium,
+                                        "thick" => border_region.style = BorderStyle::Thick,
                                         "double" => border_region.style = BorderStyle::Double,
-                                        _ => (),
+                                        "dashed" => border_region.style = BorderStyle::Dashed,
+                                        "dotted" => border_region.style = BorderStyle::Dotted,
+                                        "dashDot" => border_region.style = BorderStyle::DashDot,
+                                        "dashDotDot" => {
+                                            border_region.style = BorderStyle::DashDotDot
+                                        }
+                                        "slantDashDot" => {
+                                            border_region.style = BorderStyle::SlantDashDot
+                                        }
+                                        "hair" => border_region.style = BorderStyle::Hair,
+                                        "mediumDashed" => {
+                                            border_region.style = BorderStyle::MediumDashed
+                                        }
+                                        "mediumDashDot" => {
+                                            border_region.style = BorderStyle::MediumDashDot
+                                        }
+                                        "mediumDashDotDot" => {
+                                            border_region.style = BorderStyle::MediumDashDotDot
+                                        }
+                                        _ => (), // Ignore unsupported or unknown values
                                     }
                                 }
                                 _ => (),
