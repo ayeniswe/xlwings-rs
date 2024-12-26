@@ -1,5 +1,8 @@
 //! The module holds all logic to fully deserialize the sharedStrings.xml in the .xlsx file
-use crate::{errors::XcelmateError, stream::utils::{xml_reader, Key}};
+use crate::{
+    errors::XcelmateError,
+    stream::utils::{xml_reader, Key},
+};
 use quick_xml::{
     events::{attributes::Attribute, Event},
     name::QName,
@@ -13,7 +16,10 @@ use std::{
 };
 use zip::{read::ZipFile, ZipArchive};
 
-use super::stylesheet::{Color, FontProperty, Rgb};
+use super::{
+    stylesheet::{Color, FontProperty, Rgb},
+    Stylesheet,
+};
 
 type SharedStringRef = Arc<SharedString>;
 
@@ -149,13 +155,8 @@ impl SharedStringTable {
                             if let Ok(a) = attr {
                                 match a.key {
                                     QName(b"rgb") => {
-                                        let val = a.unescape_value()?.to_string();
-                                        // The first two letter are ignored since they response to alpha
-                                        let base16 = 16u32;
-                                        let red = u8::from_str_radix(&val[2..4], base16)?;
-                                        let green = u8::from_str_radix(&val[4..6], base16)?;
-                                        let blue = u8::from_str_radix(&val[6..8], base16)?;
-                                        p.color = Color::Rgb(Rgb::Custom((red, green, blue)));
+                                        p.color =
+                                            Stylesheet::to_rgb(a.unescape_value()?.to_string())?;
                                     }
                                     QName(b"theme") => {
                                         p.color = Color::Theme {
@@ -396,7 +397,7 @@ impl SharedStringTable {
 mod shared_string_api {
     use crate::stream::xlsx::{
         shared_string_table::{
-            Color, Rgb, FontProperty, SharedString, SharedStringTable, StringPiece, StringType,
+            Color, FontProperty, Rgb, SharedString, SharedStringTable, StringPiece, StringType,
         },
         Xlsx,
     };
@@ -825,9 +826,7 @@ mod shared_string_api {
 
         {
             // Should show one ref exists still
-            let shared_string_ref = sst
-                .get_shared_string_ref_from_key(0)
-                .unwrap();
+            let shared_string_ref = sst.get_shared_string_ref_from_key(0).unwrap();
             let actual = sst.remove_from_table(item.clone());
             assert_eq!(actual, Some(1));
 
