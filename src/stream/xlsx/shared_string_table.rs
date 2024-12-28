@@ -83,7 +83,7 @@ impl SharedStringTable {
                         if let Ok(a) = attr {
                             match a.key {
                                 QName(b"count") => {
-                                    self.count = a.unescape_value()?.to_string().parse::<u32>()?
+                                    self.count = a.unescape_value()?.parse::<u32>()?
                                 }
                                 // We dont care about unique count since that will be the len() of the table in SharedStringTable
                                 _ => (),
@@ -160,7 +160,7 @@ impl SharedStringTable {
                                     }
                                     QName(b"theme") => {
                                         p.color = Color::Theme {
-                                            id: a.unescape_value()?.to_string().parse::<u32>()?,
+                                            id: a.unescape_value()?.parse::<u32>()?,
                                             tint: None,
                                         };
                                     }
