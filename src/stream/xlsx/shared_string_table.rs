@@ -3,6 +3,7 @@ use crate::{
     errors::XcelmateError,
     stream::utils::{xml_reader, Key},
 };
+use bimap::BiMap;
 use quick_xml::{
     events::{attributes::Attribute, Event},
     name::QName,
@@ -58,8 +59,7 @@ struct StringPiece {
 /// **Note**: rich text will always have atleast greater than one `StringItem` and plain text will only have a single `StringItem`
 #[derive(Default)]
 pub(crate) struct SharedStringTable {
-    table: HashMap<SharedStringRef, Key>,
-    reverse_table: HashMap<Key, SharedStringRef>,
+    table: BiMap<SharedStringRef, Key>,
     count: u32,
 }
 
@@ -94,7 +94,6 @@ impl SharedStringTable {
                 Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"si" => {
                     if let Some(s) = SharedStringTable::read_string(&mut xml, e.name())? {
                         let text = Arc::new(s);
-                        self.reverse_table.insert(idx, text.clone());
                         self.table.insert(text, idx);
                         idx += 1;
                     }
@@ -338,8 +337,8 @@ impl SharedStringTable {
     /// Get the shared string ref
     pub(crate) fn shared_string_ref(&mut self, item: SharedString) -> Option<SharedStringRef> {
         self.increment_count();
-        if let Some(i) = self.table.get(&item) {
-            Some(self.reverse_table.get(i).unwrap().clone())
+        if let Some(i) = self.table.get_by_left(&item) {
+            Some(self.table.get_by_right(i).unwrap().clone())
         } else {
             None
         }
@@ -348,7 +347,7 @@ impl SharedStringTable {
     /// Get the shared string ref from key
     pub(crate) fn get_shared_string_ref_from_key(&mut self, key: Key) -> Option<SharedStringRef> {
         self.count += 1;
-        if let Some(i) = self.reverse_table.get(&key) {
+        if let Some(i) = self.table.get_by_right(&key) {
             Some(i.clone())
         } else {
             None
@@ -360,7 +359,6 @@ impl SharedStringTable {
         self.increment_count();
         let int_ref = self.unique_count();
         let item = Arc::new(item);
-        self.reverse_table.insert(int_ref, item.clone());
         self.table.insert(item.clone(), int_ref);
         item
     }
@@ -374,18 +372,17 @@ impl SharedStringTable {
     /// A return value of `Some(0)` indicates the entry has been removed from both tables
     pub(crate) fn remove_from_table(&mut self, item: SharedString) -> Option<usize> {
         self.decrement_count();
-        if let Some(key) = self.table.get(&item) {
-            let shared_string_ref = self.reverse_table.get(key).unwrap();
+        if let Some(key) = self.table.get_by_left(&item) {
+            let shared_string_ref = self.table.get_by_right(key).unwrap();
             let count = Arc::strong_count(shared_string_ref);
 
-            // 2 count since both hashmaps hold ref to shared string
-            const TABLE_COUNT: usize = 2;
-            if count == TABLE_COUNT {
-                let int_ref = self.table.remove(&item).unwrap();
-                self.reverse_table.remove(&int_ref);
+            // We should only remove when no one reference it no longer
+            // the 1 means the table only has a reference
+            if count == 1 {
+                self.table.remove_by_left(&item).unwrap();
                 Some(0)
             } else {
-                Some(count - TABLE_COUNT)
+                Some(count - 1)
             }
         } else {
             None
@@ -395,11 +392,8 @@ impl SharedStringTable {
 
 #[cfg(test)]
 mod shared_string_api {
-    use crate::stream::xlsx::{
-        shared_string_table::{
-            Color, FontProperty, Rgb, SharedString, SharedStringTable, StringPiece, StringType,
-        },
-        Xlsx,
+    use crate::stream::xlsx::shared_string_table::{
+        Color, FontProperty, Rgb, SharedString, SharedStringTable, StringPiece, StringType,
     };
     use std::{fs::File, sync::Arc};
     use zip::ZipArchive;
@@ -582,7 +576,7 @@ mod shared_string_api {
         let actual = sst
             .shared_string_ref(SharedString::RichText(pieces.clone()))
             .unwrap();
-        assert_eq!(Arc::strong_count(&actual), 3);
+        assert_eq!(Arc::strong_count(&actual), 2);
     }
 
     #[test]
@@ -775,7 +769,7 @@ mod shared_string_api {
         let actual = sst
             .shared_string_ref(SharedString::PlainText(StringType::Preserve("The ".into())))
             .unwrap();
-        assert_eq!(Arc::strong_count(&actual), 3);
+        assert_eq!(Arc::strong_count(&actual), 2);
     }
 
     #[test]
@@ -794,11 +788,11 @@ mod shared_string_api {
 
         // Should add a new item
         let actual = sst.add_to_table(item);
-        assert_eq!(Arc::strong_count(&actual), 3);
+        assert_eq!(Arc::strong_count(&actual), 2);
 
         // Total count should be incremented
         let actual = sst.count();
-        assert_eq!(actual, 2);
+        assert_eq!(actual, 2 );
     }
 
     #[test]
