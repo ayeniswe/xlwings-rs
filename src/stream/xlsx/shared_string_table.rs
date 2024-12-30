@@ -391,446 +391,449 @@ impl SharedStringTable {
 }
 
 #[cfg(test)]
-mod shared_string_api {
-    use crate::stream::xlsx::shared_string_table::{
-        Color, FontProperty, Rgb, SharedString, SharedStringTable, StringPiece, StringType,
-    };
-    use std::{fs::File, sync::Arc};
-    use zip::ZipArchive;
+mod shared_string_unittests {
 
-    fn init(path: &str) -> SharedStringTable {
-        let file = File::open(path).unwrap();
-        let mut zip = ZipArchive::new(file).unwrap();
-        let mut sst = SharedStringTable::default();
-        sst.read_shared_strings(&mut zip).unwrap();
-        sst
-    }
+    mod shared_string_api {
+        use crate::stream::xlsx::shared_string_table::{
+            Color, FontProperty, Rgb, SharedString, SharedStringTable, StringPiece, StringType,
+        };
+        use std::{fs::File, sync::Arc};
+        use zip::ZipArchive;
 
-    #[test]
-    fn query_richtext_match() {
-        let mut sst = init("tests/workbook01.xlsx");
-        let pieces = vec![
-            StringPiece {
-                props: None,
-                value: StringType::Preserve("The ".into()),
-            },
-            StringPiece {
-                props: Some(FontProperty {
-                    bold: true,
-                    underline: true,
-                    double: false,
-                    italic: true,
-                    size: "11".into(),
-                    color: Color::Theme { id: 1, tint: None },
-                    font: "Calibri".into(),
-                    family: 2,
-                    scheme: "minor".into(),
-                }),
-                value: StringType::NoPreserve("big".into()),
-            },
-            StringPiece {
-                props: Some(FontProperty {
-                    bold: true,
-                    underline: false,
-                    double: false,
-                    italic: false,
-                    size: "11".into(),
-                    color: Color::Theme { id: 1, tint: None },
-                    font: "Calibri".into(),
-                    family: 2,
-                    scheme: "minor".into(),
-                }),
-                value: StringType::Preserve(" example".into()),
-            },
-            StringPiece {
-                props: Some(FontProperty {
-                    bold: false,
-                    underline: false,
-                    double: false,
-                    italic: false,
-                    size: "11".into(),
-                    color: Color::Theme { id: 1, tint: None },
-                    font: "Calibri".into(),
-                    family: 2,
-                    scheme: "minor".into(),
-                }),
-                value: StringType::Preserve(" ".into()),
-            },
-            StringPiece {
-                props: Some(FontProperty {
-                    bold: false,
-                    underline: false,
-                    double: false,
-                    italic: true,
-                    size: "11".into(),
-                    color: Color::Theme { id: 1, tint: None },
-                    font: "Calibri".into(),
-                    family: 2,
-                    scheme: "minor".into(),
-                }),
-                value: StringType::Preserve("of ".into()),
-            },
-            StringPiece {
-                props: Some(FontProperty {
-                    bold: false,
-                    underline: true,
-                    double: false,
-                    italic: false,
-                    size: "11".into(),
-                    color: Color::Theme { id: 1, tint: None },
-                    font: "Calibri".into(),
-                    family: 2,
-                    scheme: "minor".into(),
-                }),
-                value: StringType::NoPreserve("some".into()),
-            },
-            StringPiece {
-                props: Some(FontProperty {
-                    bold: false,
-                    underline: false,
-                    double: false,
-                    italic: false,
-                    size: "11".into(),
-                    color: Color::Theme { id: 1, tint: None },
-                    font: "Calibri".into(),
-                    family: 2,
-                    scheme: "minor".into(),
-                }),
-                value: StringType::Preserve(" ".into()),
-            },
-            StringPiece {
-                props: Some(FontProperty {
-                    bold: false,
-                    underline: false,
-                    double: false,
-                    italic: false,
-                    size: "11".into(),
-                    color: Color::Theme {
-                        id: 5,
-                        tint: Some("0.39997558519241921".into()),
-                    },
-                    font: "Calibri".into(),
-                    family: 2,
-                    scheme: "minor".into(),
-                }),
-                value: StringType::NoPreserve("rich".into()),
-            },
-            StringPiece {
-                props: Some(FontProperty {
-                    bold: false,
-                    underline: false,
-                    double: false,
-                    italic: false,
-                    size: "11".into(),
-                    color: Color::Theme { id: 1, tint: None },
-                    font: "Calibri".into(),
-                    family: 2,
-                    scheme: "minor".into(),
-                }),
-                value: StringType::Preserve(" ".into()),
-            },
-            StringPiece {
-                props: Some(FontProperty {
-                    bold: false,
-                    underline: false,
-                    double: true,
-                    italic: false,
-                    size: "11".into(),
-                    color: Color::Theme { id: 1, tint: None },
-                    font: "Calibri".into(),
-                    family: 2,
-                    scheme: "minor".into(),
-                }),
-                value: StringType::NoPreserve("text".into()),
-            },
-            StringPiece {
-                props: Some(FontProperty {
-                    bold: false,
-                    underline: false,
-                    double: false,
-                    italic: false,
-                    size: "11".into(),
-                    color: Color::Theme { id: 1, tint: None },
-                    font: "Calibri".into(),
-                    family: 2,
-                    scheme: "minor".into(),
-                }),
-                value: StringType::Preserve(" ".into()),
-            },
-            StringPiece {
-                props: Some(FontProperty {
-                    bold: false,
-                    underline: false,
-                    double: false,
-                    italic: false,
-                    size: "11".into(),
-                    color: Color::Rgb(Rgb::Custom(186, 155, 203)),
-                    font: "Calibri".into(),
-                    family: 2,
-                    scheme: "minor".into(),
-                }),
-                value: StringType::NoPreserve("here".into()),
-            },
-        ];
-        // Item should already exist
-        let actual = sst
-            .shared_string_ref(SharedString::RichText(pieces.clone()))
-            .unwrap();
-        assert_eq!(Arc::strong_count(&actual), 2);
-    }
+        fn init(path: &str) -> SharedStringTable {
+            let file = File::open(path).unwrap();
+            let mut zip = ZipArchive::new(file).unwrap();
+            let mut sst = SharedStringTable::default();
+            sst.read_shared_strings(&mut zip).unwrap();
+            sst
+        }
 
-    #[test]
-    fn query_richtext_no_match() {
-        let mut sst = init("tests/workbook01.xlsx");
-        let pieces = vec![
-            StringPiece {
-                props: None,
-                value: StringType::Preserve("The ".into()),
-            },
-            StringPiece {
-                props: Some(FontProperty {
-                    bold: true,
-                    underline: true,
-                    double: false,
-                    italic: true,
-                    size: "11".into(),
-                    color: Color::Theme { id: 1, tint: None },
-                    font: "Calibri".into(),
-                    family: 2,
-                    scheme: "minor".into(),
-                }),
-                value: StringType::NoPreserve("big".into()),
-            },
-            StringPiece {
-                props: Some(FontProperty {
-                    bold: true,
-                    underline: false,
-                    double: false,
-                    italic: false,
-                    size: "11".into(),
-                    color: Color::Theme { id: 1, tint: None },
-                    font: "Calibri".into(),
-                    family: 2,
-                    scheme: "minor".into(),
-                }),
-                value: StringType::Preserve(" example".into()),
-            },
-            StringPiece {
-                props: Some(FontProperty {
-                    bold: false,
-                    underline: false,
-                    double: false,
-                    italic: false,
-                    size: "11".into(),
-                    color: Color::Theme { id: 1, tint: None },
-                    font: "Calibri".into(),
-                    family: 2,
-                    scheme: "minor".into(),
-                }),
-                value: StringType::Preserve(" ".into()),
-            },
-            StringPiece {
-                props: Some(FontProperty {
-                    bold: false,
-                    underline: false,
-                    double: false,
-                    italic: true,
-                    size: "11".into(),
-                    color: Color::Theme { id: 1, tint: None },
-                    font: "Calibri".into(),
-                    family: 2,
-                    scheme: "minor".into(),
-                }),
-                value: StringType::Preserve("of ".into()),
-            },
-            StringPiece {
-                props: Some(FontProperty {
-                    bold: false,
-                    underline: true,
-                    double: false,
-                    italic: false,
-                    size: "11".into(),
-                    color: Color::Theme { id: 1, tint: None },
-                    font: "Calibri".into(),
-                    family: 2,
-                    scheme: "minor".into(),
-                }),
-                value: StringType::NoPreserve("some".into()),
-            },
-            StringPiece {
-                props: Some(FontProperty {
-                    bold: false,
-                    underline: false,
-                    double: false,
-                    italic: false,
-                    size: "11".into(),
-                    color: Color::Theme { id: 1, tint: None },
-                    font: "Calibri".into(),
-                    family: 2,
-                    scheme: "minor".into(),
-                }),
-                value: StringType::Preserve(" ".into()),
-            },
-            StringPiece {
-                props: Some(FontProperty {
-                    bold: false,
-                    underline: false,
-                    double: false,
-                    italic: false,
-                    size: "11".into(),
-                    color: Color::Theme {
-                        id: 5,
-                        tint: Some("0.39997558519241921".into()),
-                    },
-                    font: "Calibri".into(),
-                    family: 2,
-                    scheme: "minor".into(),
-                }),
-                value: StringType::NoPreserve("rich".into()),
-            },
-            StringPiece {
-                props: Some(FontProperty {
-                    bold: false,
-                    underline: false,
-                    double: false,
-                    italic: false,
-                    size: "11".into(),
-                    color: Color::Theme { id: 1, tint: None },
-                    font: "Calibri".into(),
-                    family: 2,
-                    scheme: "minor".into(),
-                }),
-                value: StringType::Preserve(" ".into()),
-            },
-            StringPiece {
-                props: Some(FontProperty {
-                    bold: false,
-                    underline: false,
-                    double: true,
-                    italic: false,
-                    size: "11".into(),
-                    color: Color::Theme { id: 1, tint: None },
-                    font: "Calibri".into(),
-                    family: 2,
-                    scheme: "minor".into(),
-                }),
-                value: StringType::NoPreserve("text".into()),
-            },
-            StringPiece {
-                props: Some(FontProperty {
-                    bold: false,
-                    underline: false,
-                    double: false,
-                    italic: false,
-                    size: "11".into(),
-                    color: Color::Theme { id: 1, tint: None },
-                    font: "Calibri".into(),
-                    family: 2,
-                    scheme: "minor".into(),
-                }),
-                value: StringType::Preserve(" ".into()),
-            },
-            StringPiece {
-                props: Some(FontProperty {
-                    bold: false,
-                    underline: false,
-                    double: false,
-                    italic: false,
-                    size: "11".into(),
-                    color: Color::Rgb(Rgb::Custom(186, 155, 203)),
-                    font: "Calibrri".into(),
-                    family: 2,
-                    scheme: "minor".into(),
-                }),
-                value: StringType::NoPreserve("here".into()),
-            },
-        ];
+        #[test]
+        fn get_richtext_match() {
+            let mut sst = init("tests/workbook01.xlsx");
+            let pieces = vec![
+                StringPiece {
+                    props: None,
+                    value: StringType::Preserve("The ".into()),
+                },
+                StringPiece {
+                    props: Some(FontProperty {
+                        bold: true,
+                        underline: true,
+                        double: false,
+                        italic: true,
+                        size: "11".into(),
+                        color: Color::Theme { id: 1, tint: None },
+                        font: "Calibri".into(),
+                        family: 2,
+                        scheme: "minor".into(),
+                    }),
+                    value: StringType::NoPreserve("big".into()),
+                },
+                StringPiece {
+                    props: Some(FontProperty {
+                        bold: true,
+                        underline: false,
+                        double: false,
+                        italic: false,
+                        size: "11".into(),
+                        color: Color::Theme { id: 1, tint: None },
+                        font: "Calibri".into(),
+                        family: 2,
+                        scheme: "minor".into(),
+                    }),
+                    value: StringType::Preserve(" example".into()),
+                },
+                StringPiece {
+                    props: Some(FontProperty {
+                        bold: false,
+                        underline: false,
+                        double: false,
+                        italic: false,
+                        size: "11".into(),
+                        color: Color::Theme { id: 1, tint: None },
+                        font: "Calibri".into(),
+                        family: 2,
+                        scheme: "minor".into(),
+                    }),
+                    value: StringType::Preserve(" ".into()),
+                },
+                StringPiece {
+                    props: Some(FontProperty {
+                        bold: false,
+                        underline: false,
+                        double: false,
+                        italic: true,
+                        size: "11".into(),
+                        color: Color::Theme { id: 1, tint: None },
+                        font: "Calibri".into(),
+                        family: 2,
+                        scheme: "minor".into(),
+                    }),
+                    value: StringType::Preserve("of ".into()),
+                },
+                StringPiece {
+                    props: Some(FontProperty {
+                        bold: false,
+                        underline: true,
+                        double: false,
+                        italic: false,
+                        size: "11".into(),
+                        color: Color::Theme { id: 1, tint: None },
+                        font: "Calibri".into(),
+                        family: 2,
+                        scheme: "minor".into(),
+                    }),
+                    value: StringType::NoPreserve("some".into()),
+                },
+                StringPiece {
+                    props: Some(FontProperty {
+                        bold: false,
+                        underline: false,
+                        double: false,
+                        italic: false,
+                        size: "11".into(),
+                        color: Color::Theme { id: 1, tint: None },
+                        font: "Calibri".into(),
+                        family: 2,
+                        scheme: "minor".into(),
+                    }),
+                    value: StringType::Preserve(" ".into()),
+                },
+                StringPiece {
+                    props: Some(FontProperty {
+                        bold: false,
+                        underline: false,
+                        double: false,
+                        italic: false,
+                        size: "11".into(),
+                        color: Color::Theme {
+                            id: 5,
+                            tint: Some("0.39997558519241921".into()),
+                        },
+                        font: "Calibri".into(),
+                        family: 2,
+                        scheme: "minor".into(),
+                    }),
+                    value: StringType::NoPreserve("rich".into()),
+                },
+                StringPiece {
+                    props: Some(FontProperty {
+                        bold: false,
+                        underline: false,
+                        double: false,
+                        italic: false,
+                        size: "11".into(),
+                        color: Color::Theme { id: 1, tint: None },
+                        font: "Calibri".into(),
+                        family: 2,
+                        scheme: "minor".into(),
+                    }),
+                    value: StringType::Preserve(" ".into()),
+                },
+                StringPiece {
+                    props: Some(FontProperty {
+                        bold: false,
+                        underline: false,
+                        double: true,
+                        italic: false,
+                        size: "11".into(),
+                        color: Color::Theme { id: 1, tint: None },
+                        font: "Calibri".into(),
+                        family: 2,
+                        scheme: "minor".into(),
+                    }),
+                    value: StringType::NoPreserve("text".into()),
+                },
+                StringPiece {
+                    props: Some(FontProperty {
+                        bold: false,
+                        underline: false,
+                        double: false,
+                        italic: false,
+                        size: "11".into(),
+                        color: Color::Theme { id: 1, tint: None },
+                        font: "Calibri".into(),
+                        family: 2,
+                        scheme: "minor".into(),
+                    }),
+                    value: StringType::Preserve(" ".into()),
+                },
+                StringPiece {
+                    props: Some(FontProperty {
+                        bold: false,
+                        underline: false,
+                        double: false,
+                        italic: false,
+                        size: "11".into(),
+                        color: Color::Rgb(Rgb::Custom(186, 155, 203)),
+                        font: "Calibri".into(),
+                        family: 2,
+                        scheme: "minor".into(),
+                    }),
+                    value: StringType::NoPreserve("here".into()),
+                },
+            ];
+            // Item should already exist
+            let actual = sst
+                .shared_string_ref(SharedString::RichText(pieces.clone()))
+                .unwrap();
+            assert_eq!(Arc::strong_count(&actual), 2);
+        }
 
-        // Item should not exist
-        let actual = sst.shared_string_ref(SharedString::RichText(pieces.clone()));
-        assert_eq!(actual, None);
-    }
+        #[test]
+        fn get_richtext_no_match() {
+            let mut sst = init("tests/workbook01.xlsx");
+            let pieces = vec![
+                StringPiece {
+                    props: None,
+                    value: StringType::Preserve("The ".into()),
+                },
+                StringPiece {
+                    props: Some(FontProperty {
+                        bold: true,
+                        underline: true,
+                        double: false,
+                        italic: true,
+                        size: "11".into(),
+                        color: Color::Theme { id: 1, tint: None },
+                        font: "Calibri".into(),
+                        family: 2,
+                        scheme: "minor".into(),
+                    }),
+                    value: StringType::NoPreserve("big".into()),
+                },
+                StringPiece {
+                    props: Some(FontProperty {
+                        bold: true,
+                        underline: false,
+                        double: false,
+                        italic: false,
+                        size: "11".into(),
+                        color: Color::Theme { id: 1, tint: None },
+                        font: "Calibri".into(),
+                        family: 2,
+                        scheme: "minor".into(),
+                    }),
+                    value: StringType::Preserve(" example".into()),
+                },
+                StringPiece {
+                    props: Some(FontProperty {
+                        bold: false,
+                        underline: false,
+                        double: false,
+                        italic: false,
+                        size: "11".into(),
+                        color: Color::Theme { id: 1, tint: None },
+                        font: "Calibri".into(),
+                        family: 2,
+                        scheme: "minor".into(),
+                    }),
+                    value: StringType::Preserve(" ".into()),
+                },
+                StringPiece {
+                    props: Some(FontProperty {
+                        bold: false,
+                        underline: false,
+                        double: false,
+                        italic: true,
+                        size: "11".into(),
+                        color: Color::Theme { id: 1, tint: None },
+                        font: "Calibri".into(),
+                        family: 2,
+                        scheme: "minor".into(),
+                    }),
+                    value: StringType::Preserve("of ".into()),
+                },
+                StringPiece {
+                    props: Some(FontProperty {
+                        bold: false,
+                        underline: true,
+                        double: false,
+                        italic: false,
+                        size: "11".into(),
+                        color: Color::Theme { id: 1, tint: None },
+                        font: "Calibri".into(),
+                        family: 2,
+                        scheme: "minor".into(),
+                    }),
+                    value: StringType::NoPreserve("some".into()),
+                },
+                StringPiece {
+                    props: Some(FontProperty {
+                        bold: false,
+                        underline: false,
+                        double: false,
+                        italic: false,
+                        size: "11".into(),
+                        color: Color::Theme { id: 1, tint: None },
+                        font: "Calibri".into(),
+                        family: 2,
+                        scheme: "minor".into(),
+                    }),
+                    value: StringType::Preserve(" ".into()),
+                },
+                StringPiece {
+                    props: Some(FontProperty {
+                        bold: false,
+                        underline: false,
+                        double: false,
+                        italic: false,
+                        size: "11".into(),
+                        color: Color::Theme {
+                            id: 5,
+                            tint: Some("0.39997558519241921".into()),
+                        },
+                        font: "Calibri".into(),
+                        family: 2,
+                        scheme: "minor".into(),
+                    }),
+                    value: StringType::NoPreserve("rich".into()),
+                },
+                StringPiece {
+                    props: Some(FontProperty {
+                        bold: false,
+                        underline: false,
+                        double: false,
+                        italic: false,
+                        size: "11".into(),
+                        color: Color::Theme { id: 1, tint: None },
+                        font: "Calibri".into(),
+                        family: 2,
+                        scheme: "minor".into(),
+                    }),
+                    value: StringType::Preserve(" ".into()),
+                },
+                StringPiece {
+                    props: Some(FontProperty {
+                        bold: false,
+                        underline: false,
+                        double: true,
+                        italic: false,
+                        size: "11".into(),
+                        color: Color::Theme { id: 1, tint: None },
+                        font: "Calibri".into(),
+                        family: 2,
+                        scheme: "minor".into(),
+                    }),
+                    value: StringType::NoPreserve("text".into()),
+                },
+                StringPiece {
+                    props: Some(FontProperty {
+                        bold: false,
+                        underline: false,
+                        double: false,
+                        italic: false,
+                        size: "11".into(),
+                        color: Color::Theme { id: 1, tint: None },
+                        font: "Calibri".into(),
+                        family: 2,
+                        scheme: "minor".into(),
+                    }),
+                    value: StringType::Preserve(" ".into()),
+                },
+                StringPiece {
+                    props: Some(FontProperty {
+                        bold: false,
+                        underline: false,
+                        double: false,
+                        italic: false,
+                        size: "11".into(),
+                        color: Color::Rgb(Rgb::Custom(186, 155, 203)),
+                        font: "Calibrri".into(),
+                        family: 2,
+                        scheme: "minor".into(),
+                    }),
+                    value: StringType::NoPreserve("here".into()),
+                },
+            ];
 
-    #[test]
-    fn query_plaintext_no_match() {
-        let mut sst = init("tests/workbook01.xlsx");
+            // Item should not exist
+            let actual = sst.shared_string_ref(SharedString::RichText(pieces.clone()));
+            assert_eq!(actual, None);
+        }
 
-        // Item should not exist
-        let actual =
-            sst.shared_string_ref(SharedString::PlainText(StringType::Preserve("The".into())));
-        assert_eq!(actual, None);
-    }
+        #[test]
+        fn get_plaintext_no_match() {
+            let mut sst = init("tests/workbook01.xlsx");
 
-    #[test]
-    fn query_plaintext_match() {
-        let mut sst = init("tests/workbook02.xlsx");
+            // Item should not exist
+            let actual =
+                sst.shared_string_ref(SharedString::PlainText(StringType::Preserve("The".into())));
+            assert_eq!(actual, None);
+        }
 
-        // Item should exist
-        let actual = sst
-            .shared_string_ref(SharedString::PlainText(StringType::Preserve("The ".into())))
-            .unwrap();
-        assert_eq!(Arc::strong_count(&actual), 2);
-    }
+        #[test]
+        fn get_plaintext_match() {
+            let mut sst = init("tests/workbook02.xlsx");
 
-    #[test]
-    fn table_count_is_deserialized() {
-        let sst = init("tests/workbook02.xlsx");
+            // Item should exist
+            let actual = sst
+                .shared_string_ref(SharedString::PlainText(StringType::Preserve("The ".into())))
+                .unwrap();
+            assert_eq!(Arc::strong_count(&actual), 2);
+        }
 
-        // Count should increment
-        let actual = sst.count();
-        assert_eq!(actual, 1);
-    }
+        #[test]
+        fn table_count_is_deserialized() {
+            let sst = init("tests/workbook02.xlsx");
 
-    #[test]
-    fn add_new_shared_string_to_table() {
-        let mut sst = init("tests/workbook02.xlsx");
-        let item = SharedString::PlainText(StringType::NoPreserve("The".into()));
-
-        // Should add a new item
-        let actual = sst.add_to_table(item);
-        assert_eq!(Arc::strong_count(&actual), 2);
-
-        // Total count should be incremented
-        let actual = sst.count();
-        assert_eq!(actual, 2);
-    }
-
-    #[test]
-    fn remove_shared_string_from_table() {
-        let mut sst = init("tests/workbook02.xlsx");
-        let item = SharedString::PlainText(StringType::Preserve("The ".into()));
-
-        // Should give zero ref count since removed
-        let actual = sst.remove_from_table(item.clone());
-        assert_eq!(actual, Some(0));
-
-        // Total count should be empty
-        let actual = sst.count();
-        assert_eq!(actual, 0);
-
-        // Should no longer exist
-        let actual = sst.remove_from_table(item);
-        assert_eq!(actual, None);
-    }
-
-    #[test]
-    fn do_not_remove_shared_string_from_table_when_ref_exists() {
-        let mut sst = init("tests/workbook02.xlsx");
-        let item = SharedString::PlainText(StringType::Preserve("The ".into()));
-
-        {
-            // Should show one ref exists still
-            let shared_string_ref = sst.get_shared_string_ref_from_key(0).unwrap();
-            let actual = sst.remove_from_table(item.clone());
-            assert_eq!(actual, Some(1));
-
-            // Total count should not empty
+            // Count should increment
             let actual = sst.count();
             assert_eq!(actual, 1);
         }
 
-        // Should no longer exist after drop
-        let actual = sst.remove_from_table(item);
-        assert_eq!(actual, Some(0));
+        #[test]
+        fn add_new_shared_string_to_table() {
+            let mut sst = init("tests/workbook02.xlsx");
+            let item = SharedString::PlainText(StringType::NoPreserve("The".into()));
+
+            // Should add a new item
+            let actual = sst.add_to_table(item);
+            assert_eq!(Arc::strong_count(&actual), 2);
+
+            // Total count should be incremented
+            let actual = sst.count();
+            assert_eq!(actual, 2);
+        }
+
+        #[test]
+        fn remove_shared_string_from_table() {
+            let mut sst = init("tests/workbook02.xlsx");
+            let item = SharedString::PlainText(StringType::Preserve("The ".into()));
+
+            // Should give zero ref count since removed
+            let actual = sst.remove_from_table(item.clone());
+            assert_eq!(actual, Some(0));
+
+            // Total count should be empty
+            let actual = sst.count();
+            assert_eq!(actual, 0);
+
+            // Should no longer exist
+            let actual = sst.remove_from_table(item);
+            assert_eq!(actual, None);
+        }
+
+        #[test]
+        fn do_not_remove_shared_string_from_table_when_ref_exists() {
+            let mut sst = init("tests/workbook02.xlsx");
+            let item = SharedString::PlainText(StringType::Preserve("The ".into()));
+
+            {
+                // Should show one ref exists still
+                let shared_string_ref = sst.get_shared_string_ref_from_key(0).unwrap();
+                let actual = sst.remove_from_table(item.clone());
+                assert_eq!(actual, Some(1));
+
+                // Total count should not empty
+                let actual = sst.count();
+                assert_eq!(actual, 1);
+            }
+
+            // Should no longer exist after drop
+            let actual = sst.remove_from_table(item);
+            assert_eq!(actual, Some(0));
+        }
     }
 }
