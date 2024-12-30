@@ -1,12 +1,16 @@
 use crate::{
     errors::XcelmateError,
-    stream::utils::{xml_reader, Key},
+    stream::utils::{xml_reader, Key, XmlWriter},
 };
 use bimap::BiMap;
-use quick_xml::{events::Event, name::QName, Reader};
+use quick_xml::{
+    events::{BytesText, Event},
+    name::QName,
+    Reader, Writer,
+};
 use std::{
     collections::HashMap,
-    io::{BufRead, Read, Seek},
+    io::{BufRead, Read, Seek, Write},
     sync::Arc,
 };
 use zip::ZipArchive;
@@ -16,7 +20,13 @@ use zip::ZipArchive;
 pub(crate) enum Rgb {
     Custom(u8, u8, u8),
 }
-
+impl ToString for Rgb {
+    fn to_string(&self) -> String {
+        match self {
+            Rgb::Custom(r, g, b) =>  format!("FF{}{}{}", format!("{:02X}", r), &format!("{:02X}", g), &format!("{:02X}", b))
+        }
+    }
+}
 /// The `Color` denotes the type of coloring system to
 /// use since excel has builtin coloring to choose that will map to `theme` but
 /// for custom specfic coloring `rgb` is used
@@ -32,6 +42,26 @@ pub(crate) enum Color {
 impl Default for Color {
     fn default() -> Self {
         Color::Theme { id: 1, tint: None }
+    }
+}
+impl<W: Write> XmlWriter<W> for Color {
+    fn write_xml<'a>(&self, writer: &'a mut Writer<W>) -> Result<&'a mut Writer<W>, XcelmateError> {
+        let writer = writer.create_element("color");
+        match self {
+            Color::Theme { id, tint } => {
+                let writer = writer.with_attribute(("theme", id.to_string().as_str()));
+                if let Some(tint) = tint {
+                    let writer = writer.with_attribute(("tint", tint.as_str()));
+                    Ok(writer.write_empty()?)
+                } else {
+                    Ok(writer.write_empty()?)
+                }
+            }
+            Color::Rgb(rgb) =>  {
+                let writer = writer.with_attribute(("rgb", rgb.to_string().as_str()));
+                Ok(writer.write_empty()?)
+            },
+        }
     }
 }
 
@@ -720,7 +750,7 @@ impl Stylesheet {
                             match a.key {
                                 QName(b"val") => {
                                     match a.unescape_value()?.to_string().as_str() {
-                                        "underline" => {
+                                        "double" => {
                                             font.double = true;
                                             // No longer can be true if doubled
                                             font.underline = false;
@@ -909,13 +939,18 @@ impl Stylesheet {
         let blue = u8::from_str_radix(&value[6..8], base16)?;
         Ok(Color::Rgb(Rgb::Custom(red, green, blue)))
     }
+
+    /// Convert from u8 to a hexadecimal of RGB model scale
+    pub(crate) fn from_rgb(r: u8, g: u8, b: u8) -> String {
+        format!("{:02X}", r) + &format!("{:02X}", g) + &format!("{:02X}", b)
+    }
 }
 
 #[cfg(test)]
 mod stylesheet_unittests {
+    use super::Stylesheet;
     use std::fs::File;
     use zip::ZipArchive;
-    use super::Stylesheet;
 
     fn init(path: &str) -> Stylesheet {
         let file = File::open(path).unwrap();
@@ -1198,7 +1233,7 @@ mod stylesheet_unittests {
                         <font>
                             <b/>
                             <i/>
-                            <u val="underline"/>
+                            <u val="double"/>
                             <color theme="1"/>
                             <sz val="21"/>
                             <name val="Calibri"/>
@@ -1630,7 +1665,10 @@ mod stylesheet_unittests {
                     top: BorderRegion::default(),
                     bottom: BorderRegion {
                         style: Some(BorderStyle::Medium),
-                        color: Some(Color::Theme { id: 4, tint: Some("0.39997558519241921".into()) })
+                        color: Some(Color::Theme {
+                            id: 4,
+                            tint: Some("0.39997558519241921".into())
+                        })
                     }
                 }))
             )
@@ -1642,6 +1680,5 @@ mod stylesheet_unittests {
             let actual = style.get_border_ref_from_key(30);
             assert_eq!(actual, None)
         }
-
     }
 }

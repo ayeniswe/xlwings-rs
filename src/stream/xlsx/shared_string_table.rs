@@ -1,21 +1,21 @@
 //! The module holds all logic to fully deserialize the sharedStrings.xml in the .xlsx file
 use crate::{
     errors::XcelmateError,
-    stream::utils::{xml_reader, Key},
+    stream::utils::{xml_reader, Key, Save, XmlWriter},
 };
-use bimap::BiMap;
+use bimap::{BiBTreeMap, BiMap};
 use quick_xml::{
-    events::{attributes::Attribute, Event},
+    events::{attributes::Attribute, BytesDecl, BytesStart, BytesText, Event},
     name::QName,
-    Reader,
+    Reader, Writer,
 };
 use std::{
-    borrow::Cow,
+    borrow::{Borrow, Cow},
     collections::HashMap,
-    io::{BufRead, BufReader, Read, Seek},
+    io::{BufRead, BufReader, Read, Seek, Write},
     sync::Arc,
 };
-use zip::{read::ZipFile, ZipArchive};
+use zip::{read::ZipFile, write::{FileOptionExtension, FileOptions}, ZipArchive};
 
 use super::{
     stylesheet::{Color, FontProperty, Rgb},
@@ -33,15 +33,56 @@ enum StringType {
     // Normal string with no leading or trailing spaces
     NoPreserve(String),
 }
+impl<W: Write> XmlWriter<W> for StringType {
+    fn write_xml<'a>(&self, writer: &'a mut Writer<W>) -> Result<&'a mut Writer<W>, XcelmateError> {
+        match self {
+            StringType::Preserve(s) => writer
+                .create_element("t")
+                .with_attribute(("xml:space", "preserve"))
+                .write_text_content(BytesText::new(s))?,
+            StringType::NoPreserve(s) => writer
+                .create_element("t")
+                .write_text_content(BytesText::new(s))?,
+        };
+        Ok(writer)
+    }
+}
 
 /// The `SharedString` represents either a rich text or plaintext string and needs
 /// to track ref counts to handle removal.
 #[derive(Debug, PartialEq, Eq, Clone, PartialOrd, Hash, Ord)]
-enum SharedString {
+pub(crate) enum SharedString {
     RichText(Vec<StringPiece>),
     PlainText(StringType),
 }
-
+impl<W: Write> XmlWriter<W> for SharedString {
+    fn write_xml<'a>(&self, writer: &'a mut Writer<W>) -> Result<&'a mut Writer<W>, XcelmateError> {
+        let writer = writer.create_element("si");
+        match self {
+            SharedString::RichText(pieces) => {
+                Ok(writer.write_inner_content::<_, XcelmateError>(|writer| {
+                    // <r>
+                    for piece in pieces {
+                        writer
+                            .create_element("r")
+                            .write_inner_content::<_, XcelmateError>(|writer| {
+                                piece.write_xml(writer)?;
+                                Ok(())
+                            })?;
+                    }
+                    Ok(())
+                })?)
+            }
+            SharedString::PlainText(st) => {
+                // <t>
+                Ok(writer.write_inner_content::<_, XcelmateError>(|writer| {
+                    st.write_xml(writer)?;
+                    Ok(())
+                })?)
+            }
+        }
+    }
+}
 /// The `StringPiece` represents a string that is contained in a richtext denoted by having a `SharedString::RichText`.
 /// The pieces of text can be with styling or no styling
 #[derive(Debug, PartialEq, Clone, Eq, PartialOrd, Hash, Ord)]
@@ -51,6 +92,50 @@ struct StringPiece {
     // The actual raw value of text
     value: StringType,
 }
+impl<W: Write> XmlWriter<W> for StringPiece {
+    fn write_xml<'a>(&self, writer: &'a mut Writer<W>) -> Result<&'a mut Writer<W>, XcelmateError> {
+        if let Some(props) = &self.props {
+            writer
+                .create_element("rPr")
+                .write_inner_content::<_, XcelmateError>(|writer| {
+                    if props.bold {
+                        writer.create_element("b").write_empty()?;
+                    }
+                    if props.italic {
+                        writer.create_element("i").write_empty()?;
+                    }
+                    if props.double {
+                        writer
+                            .create_element("u")
+                            .with_attribute(("val", "double"))
+                            .write_empty()?;
+                    } else if props.underline {
+                        writer.create_element("u").write_empty()?;
+                    }
+                    writer
+                        .create_element("sz")
+                        .with_attribute(("val", props.size.as_str()))
+                        .write_empty()?;
+                    props.color.write_xml(writer)?;
+                    writer
+                        .create_element("rFont")
+                        .with_attribute(("val", props.font.as_str()))
+                        .write_empty()?;
+                    writer
+                        .create_element("family")
+                        .with_attribute(("val", props.family.to_string().as_str()))
+                        .write_empty()?;
+                    writer
+                        .create_element("scheme")
+                        .with_attribute(("val", props.scheme.as_str()))
+                        .write_empty()?;
+                    Ok(())
+                })?;
+        }
+        self.value.write_xml(writer)?;
+        Ok(writer)
+    }
+}
 
 /// The `SharedStringTable` provides an efficient way to map strings
 /// to their corresponding integer references used in the spreadsheet.
@@ -59,10 +144,33 @@ struct StringPiece {
 /// **Note**: rich text will always have atleast greater than one `StringItem` and plain text will only have a single `StringItem`
 #[derive(Default)]
 pub(crate) struct SharedStringTable {
-    table: BiMap<SharedStringRef, Key>,
+    table: BiBTreeMap<SharedStringRef, Key>,
     count: u32,
 }
-
+impl<W: Write> XmlWriter<W> for SharedStringTable {
+    fn write_xml<'a>(&self, writer: &'a mut Writer<W>) -> Result<&'a mut Writer<W>, XcelmateError> {
+        writer.write_event(Event::Decl(BytesDecl::new(
+            "1.0",
+            Some("UTF-8"),
+            Some("yes"),
+        )))?;
+        writer
+            .create_element("sst")
+            .with_attribute((
+                "xmlns",
+                "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
+            ))
+            .with_attribute(("count", self.count.to_string().as_str()))
+            .with_attribute(("uniqueCount", self.table.len().to_string().as_str()))
+            .write_inner_content::<_, XcelmateError>(|writer| {
+                for (si, _) in self.table.right_range(0..self.table.len()) {
+                    si.write_xml(writer)?;
+                }
+                Ok(())
+            })?;
+        Ok(writer)
+    }
+}
 impl SharedStringTable {
     // Ported from calamine https://github.com/tafia/calamine/tree/master
     pub(crate) fn read_shared_strings<'a, RS: Read + Seek>(
@@ -233,9 +341,15 @@ impl SharedStringTable {
                             if let Ok(a) = attr {
                                 match a.key {
                                     QName(b"val") => {
-                                        p.double = true;
-                                        // No longer can be true if doubled
-                                        p.underline = false;
+                                        match a.unescape_value()?.to_string().as_str() {
+                                            "double" => {
+                                                p.double = true;
+                                                // No longer can be true if doubled
+                                                p.underline = false;
+                                            }
+                                            "none" => p.underline = false,
+                                            _ => (),
+                                        }
                                     }
                                     _ => (),
                                 }
@@ -388,17 +502,32 @@ impl SharedStringTable {
             None
         }
     }
+
+}
+
+impl<W: Write + Seek, EX: FileOptionExtension> Save<W, EX> for SharedStringTable {
+    fn save(&mut self, writer: &mut zip::ZipWriter<W>, options: FileOptions<EX>) -> Result<(), XcelmateError> {
+        writer.start_file("xl/sharedStrings.xml", options)?;
+        self.write_xml(&mut Writer::new(writer))?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod shared_string_unittests {
 
     mod shared_string_api {
-        use crate::stream::xlsx::shared_string_table::{
+        use crate::stream::{utils::{Save, XmlWriter}, xlsx::shared_string_table::{
             Color, FontProperty, Rgb, SharedString, SharedStringTable, StringPiece, StringType,
+        }};
+        use quick_xml::Writer;
+        use std::{
+            fs::File,
+            io::{BufRead, Cursor},
+            str::Lines,
+            sync::Arc,
         };
-        use std::{fs::File, sync::Arc};
-        use zip::ZipArchive;
+        use zip::{write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
 
         fn init(path: &str) -> SharedStringTable {
             let file = File::open(path).unwrap();
@@ -822,7 +951,7 @@ mod shared_string_unittests {
 
             {
                 // Should show one ref exists still
-                let shared_string_ref = sst.get_shared_string_ref_from_key(0).unwrap();
+                let _shared_string_ref = sst.get_shared_string_ref_from_key(0).unwrap();
                 let actual = sst.remove_from_table(item.clone());
                 assert_eq!(actual, Some(1));
 
@@ -834,6 +963,16 @@ mod shared_string_unittests {
             // Should no longer exist after drop
             let actual = sst.remove_from_table(item);
             assert_eq!(actual, Some(0));
+        }
+
+        #[test]
+        fn save_file() {
+            let mut sst = init("tests/workbook04.xlsx");
+            let mut zip = ZipWriter::new(Cursor::new(Vec::<u8>::new()));
+            sst.save(&mut zip, SimpleFileOptions::default().compression_method(CompressionMethod::Deflated)).unwrap();
+
+            // Verify all data is written
+            assert_eq!(zip.finish().unwrap().into_inner().len(), 1610);
         }
     }
 }
