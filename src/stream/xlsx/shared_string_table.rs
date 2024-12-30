@@ -12,7 +12,7 @@ use quick_xml::{
 use std::{
     borrow::Cow,
     collections::HashMap,
-    io::{BufReader, Read, Seek},
+    io::{BufRead, BufReader, Read, Seek},
     sync::Arc,
 };
 use zip::{read::ZipFile, ZipArchive};
@@ -109,8 +109,8 @@ impl SharedStringTable {
 
     // Ported from calamine https://github.com/tafia/calamine/tree/master
     /// Read either a simple or richtext string
-    fn read_string(
-        xml: &mut Reader<BufReader<ZipFile>>,
+    fn read_string<B: BufRead>(
+        xml: &mut Reader<B>,
         QName(closing): QName,
     ) -> Result<Option<SharedString>, XcelmateError> {
         let mut buf = Vec::with_capacity(1024);
@@ -564,7 +564,7 @@ mod shared_string_api {
                     double: false,
                     italic: false,
                     size: "11".into(),
-                    color: Color::Rgb(Rgb::Custom((186, 155, 203))),
+                    color: Color::Rgb(Rgb::Custom(186, 155, 203)),
                     font: "Calibri".into(),
                     family: 2,
                     scheme: "minor".into(),
@@ -737,7 +737,7 @@ mod shared_string_api {
                     double: false,
                     italic: false,
                     size: "11".into(),
-                    color: Color::Rgb(Rgb::Custom((186, 155, 203))),
+                    color: Color::Rgb(Rgb::Custom(186, 155, 203)),
                     font: "Calibrri".into(),
                     family: 2,
                     scheme: "minor".into(),
@@ -792,7 +792,7 @@ mod shared_string_api {
 
         // Total count should be incremented
         let actual = sst.count();
-        assert_eq!(actual, 2 );
+        assert_eq!(actual, 2);
     }
 
     #[test]

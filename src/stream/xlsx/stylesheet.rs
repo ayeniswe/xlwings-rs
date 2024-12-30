@@ -6,22 +6,22 @@ use bimap::BiMap;
 use quick_xml::{events::Event, name::QName, Reader};
 use std::{
     collections::HashMap,
-    io::{BufReader, Read, Seek},
+    io::{BufRead, Read, Seek},
     sync::Arc,
 };
-use zip::{read::ZipFile, ZipArchive};
+use zip::ZipArchive;
 
 /// The `Rgb` promotes better api usage with hexadecimal coloring
 #[derive(Debug, PartialEq, Clone, Eq, PartialOrd, Hash, Ord)]
 pub(crate) enum Rgb {
-    Custom((u8, u8, u8)),
+    Custom(u8, u8, u8),
 }
 
 /// The `Color` denotes the type of coloring system to
 /// use since excel has builtin coloring to choose that will map to `theme` but
 /// for custom specfic coloring `rgb` is used
 ///
-/// Default is `Theme((1, None))` = black
+/// Default is equivalent to `black`
 #[derive(Debug, PartialEq, Clone, Eq, PartialOrd, Hash, Ord)]
 pub(crate) enum Color {
     /// Builtin theme from excel color palette selector which includes theme id and tint value
@@ -56,7 +56,7 @@ pub(crate) struct FontProperty {
 
 /// The formatting style to use on numbers
 #[derive(Debug, PartialEq, Default, Clone, Eq, PartialOrd, Hash, Ord)]
-struct NumberFormat {
+pub(crate) struct NumberFormat {
     id: u32,
     format_code: FormatType,
 }
@@ -88,11 +88,8 @@ pub(crate) struct Fill {
 }
 
 /// The type of line styling for a border
-#[derive(Debug, PartialEq, Default, Clone, Eq, PartialOrd, Hash, Ord)]
+#[derive(Debug, PartialEq, Clone, Eq, PartialOrd, Hash, Ord)]
 enum BorderStyle {
-    /// No border
-    #[default]
-    None,
     /// Thin border
     Thin,
     /// Medium border
@@ -124,8 +121,8 @@ enum BorderStyle {
 /// The border region to apply styling to
 #[derive(Debug, PartialEq, Default, Clone, Eq, PartialOrd, Hash, Ord)]
 struct BorderRegion {
-    style: BorderStyle,
-    color: Color,
+    style: Option<BorderStyle>,
+    color: Option<Color>,
 }
 
 /// The styling for all border regions of a cell
@@ -384,9 +381,7 @@ impl Stylesheet {
                 ////////////////////
                 // TABLE STYLE
                 /////////////
-                Ok(Event::Empty(ref e))
-                    if e.local_name().as_ref() == b"tableStyles" =>
-                {
+                Ok(Event::Empty(ref e)) if e.local_name().as_ref() == b"tableStyles" => {
                     let mut table_style = TableStyle::default();
                     ////////////////////
                     // TABLE STYLE Attrs
@@ -407,9 +402,7 @@ impl Stylesheet {
                     }
                     self.table_style = Some(table_style);
                 }
-                    Ok(Event::Start(ref e))
-                    if e.local_name().as_ref() == b"tableStyles" =>
-                {
+                Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"tableStyles" => {
                     let mut table_style = TableStyle::default();
                     ////////////////////
                     // TABLE STYLE Attrs
@@ -428,7 +421,7 @@ impl Stylesheet {
                             }
                         }
                     }
-                    
+
                     let mut table_style_buf = Vec::with_capacity(1024);
                     let mut custom_style = TableCustomStyle::default();
                     loop {
@@ -584,8 +577,8 @@ impl Stylesheet {
     }
 
     /// Read either left, right, top, or bottom of borders
-    fn read_border_region(
-        xml: &mut Reader<BufReader<ZipFile>>,
+    fn read_border_region<B: BufRead>(
+        xml: &mut Reader<B>,
         QName(mut closing): QName,
     ) -> Result<BorderRegion, XcelmateError> {
         let mut buf = Vec::with_capacity(1024);
@@ -606,29 +599,31 @@ impl Stylesheet {
                                 QName(b"style") => {
                                     let val = a.unescape_value()?.to_string();
                                     match val.as_str() {
-                                        "none" => border_region.style = BorderStyle::None,
-                                        "thin" => border_region.style = BorderStyle::Thin,
-                                        "medium" => border_region.style = BorderStyle::Medium,
-                                        "thick" => border_region.style = BorderStyle::Thick,
-                                        "double" => border_region.style = BorderStyle::Double,
-                                        "dashed" => border_region.style = BorderStyle::Dashed,
-                                        "dotted" => border_region.style = BorderStyle::Dotted,
-                                        "dashDot" => border_region.style = BorderStyle::DashDot,
+                                        "thin" => border_region.style = Some(BorderStyle::Thin),
+                                        "medium" => border_region.style = Some(BorderStyle::Medium),
+                                        "thick" => border_region.style = Some(BorderStyle::Thick),
+                                        "double" => border_region.style = Some(BorderStyle::Double),
+                                        "dashed" => border_region.style = Some(BorderStyle::Dashed),
+                                        "dotted" => border_region.style = Some(BorderStyle::Dotted),
+                                        "dashDot" => {
+                                            border_region.style = Some(BorderStyle::DashDot)
+                                        }
                                         "dashDotDot" => {
-                                            border_region.style = BorderStyle::DashDotDot
+                                            border_region.style = Some(BorderStyle::DashDotDot)
                                         }
                                         "slantDashDot" => {
-                                            border_region.style = BorderStyle::SlantDashDot
+                                            border_region.style = Some(BorderStyle::SlantDashDot)
                                         }
-                                        "hair" => border_region.style = BorderStyle::Hair,
+                                        "hair" => border_region.style = Some(BorderStyle::Hair),
                                         "mediumDashed" => {
-                                            border_region.style = BorderStyle::MediumDashed
+                                            border_region.style = Some(BorderStyle::MediumDashed)
                                         }
                                         "mediumDashDot" => {
-                                            border_region.style = BorderStyle::MediumDashDot
+                                            border_region.style = Some(BorderStyle::MediumDashDot)
                                         }
                                         "mediumDashDotDot" => {
-                                            border_region.style = BorderStyle::MediumDashDotDot
+                                            border_region.style =
+                                                Some(BorderStyle::MediumDashDotDot)
                                         }
                                         _ => (), // Ignore unsupported or unknown values
                                     }
@@ -649,22 +644,22 @@ impl Stylesheet {
                                     if let Ok(a) = attr {
                                         match a.key {
                                             QName(b"rgb") => {
-                                                border_region.color = Stylesheet::to_rgb(
+                                                border_region.color = Some(Stylesheet::to_rgb(
                                                     a.unescape_value()?.to_string(),
-                                                )?
+                                                )?)
                                             }
                                             QName(b"theme") => {
-                                                border_region.color = Color::Theme {
+                                                border_region.color = Some(Color::Theme {
                                                     id: a.unescape_value()?.parse::<u32>()?,
                                                     tint: None,
-                                                };
+                                                });
                                             }
                                             QName(b"tint") => match border_region.color {
-                                                Color::Theme { id, .. } => {
-                                                    border_region.color = Color::Theme {
+                                                Some(Color::Theme { id, .. }) => {
+                                                    border_region.color = Some(Color::Theme {
                                                         id,
                                                         tint: Some(a.unescape_value()?.to_string()),
-                                                    }
+                                                    })
                                                 }
                                                 _ => (),
                                             },
@@ -693,8 +688,8 @@ impl Stylesheet {
     }
 
     /// Read font styling
-    pub(crate) fn read_font(
-        xml: &mut Reader<BufReader<ZipFile>>,
+    pub(crate) fn read_font<B: BufRead>(
+        xml: &mut Reader<B>,
         QName(mut closing): QName,
     ) -> Result<FontProperty, XcelmateError> {
         let mut buf = Vec::with_capacity(1024);
@@ -718,13 +713,21 @@ impl Stylesheet {
                 Ok(Event::Empty(ref e)) if e.local_name().as_ref() == b"b" => font.bold = true,
                 Ok(Event::Empty(ref e)) if e.local_name().as_ref() == b"i" => font.italic = true,
                 Ok(Event::Empty(ref e)) if e.local_name().as_ref() == b"u" => {
+                    // we do not know if underline is set to not show so we set it to true incase we encountee nonr in attributes
+                    font.underline = true;
                     for attr in e.attributes() {
                         if let Ok(a) = attr {
                             match a.key {
                                 QName(b"val") => {
-                                    font.double = true;
-                                    // No longer can be true if doubled
-                                    font.underline = false;
+                                    match a.unescape_value()?.to_string().as_str() {
+                                        "underline" => {
+                                            font.double = true;
+                                            // No longer can be true if doubled
+                                            font.underline = false;
+                                        }
+                                        "none" => font.underline = false,
+                                        _ => (),
+                                    }
                                 }
                                 _ => (),
                             }
@@ -804,7 +807,7 @@ impl Stylesheet {
     }
 
     /// Read fill styling
-    fn read_fill(xml: &mut Reader<BufReader<ZipFile>>) -> Result<Fill, XcelmateError> {
+    fn read_fill<B: BufRead>(xml: &mut Reader<B>) -> Result<Fill, XcelmateError> {
         let mut buf = Vec::with_capacity(1024);
         let mut fill = Fill::default();
         loop {
@@ -904,16 +907,15 @@ impl Stylesheet {
         let red = u8::from_str_radix(&value[2..4], base16)?;
         let green = u8::from_str_radix(&value[4..6], base16)?;
         let blue = u8::from_str_radix(&value[6..8], base16)?;
-        Ok(Color::Rgb(Rgb::Custom((red, green, blue))))
+        Ok(Color::Rgb(Rgb::Custom(red, green, blue)))
     }
 }
 
 #[cfg(test)]
-mod stylesheet_edges {
-    use super::Stylesheet;
-    use crate::stream::xlsx::stylesheet::{Color, FontProperty};
+mod stylesheet_unittests {
     use std::fs::File;
     use zip::ZipArchive;
+    use super::Stylesheet;
 
     fn init(path: &str) -> Stylesheet {
         let file = File::open(path).unwrap();
@@ -923,20 +925,723 @@ mod stylesheet_edges {
         stylesheet
     }
 
-    #[test]
-    fn first_default_font_should_be_skipped() {
-        let mut style = init("tests/workbook03.xlsx");
-        let font = style.get_font_ref_from_key(2).unwrap();
-        assert_eq!(
-            *font,
-            FontProperty {
-                size: "11".into(),
-                color: Color::Theme { id: 1, tint: None },
-                font: "Calibri".into(),
-                family: 2,
-                scheme: "minor".into(),
-                ..Default::default()
+    mod stylesheet_edge_cases {
+        use crate::stream::xlsx::stylesheet::{stylesheet_unittests::init, Color, FontProperty};
+
+        #[test]
+        fn first_default_font_should_be_skipped() {
+            let mut style = init("tests/workbook03.xlsx");
+            let font = style.get_font_ref_from_key(2).unwrap();
+            assert_eq!(
+                *font,
+                FontProperty {
+                    size: "11".into(),
+                    color: Color::Theme { id: 1, tint: None },
+                    font: "Calibri".into(),
+                    family: 2,
+                    scheme: "minor".into(),
+                    ..Default::default()
+                }
+            );
+        }
+    }
+
+    mod stylesheet_api {
+        use super::init;
+        use crate::stream::xlsx::stylesheet::{
+            Border, BorderRegion, BorderStyle, CellXf, DiffXf, Fill, FontProperty, FormatType,
+            NumberFormat, PatternFill,
+        };
+        use crate::stream::xlsx::{
+            stylesheet::{Color, Rgb},
+            Stylesheet,
+        };
+        use quick_xml::{events::Event, name::QName, Reader};
+        use std::io::Cursor;
+        use std::sync::Arc;
+
+        #[test]
+        fn get_custom_table_style() {
+            let mut style = init("tests/workbook04.xlsx");
+            let actual = style.get_custom_table_style("Customer Contact List");
+            assert!(actual.is_some())
+        }
+
+        #[test]
+        fn test_to_rgb() {
+            let result = Stylesheet::to_rgb("FF573345".into()).unwrap();
+            assert_eq!(result, Color::Rgb(Rgb::Custom(87, 51, 69)));
+        }
+
+        #[test]
+        fn test_read_border_region_for_empty_borders() {
+            let xml_content = r#"
+                <root>
+                    <border>
+                        <left></left>
+                        <right></right>
+                        <top></top>
+                        <bottom></bottom>
+                    </border>
+                </root>
+                "#;
+            let mut xml = Reader::from_reader(Cursor::new(xml_content));
+            let mut buf = Vec::with_capacity(1024);
+
+            loop {
+                match xml.read_event_into(&mut buf) {
+                    Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"border" => {
+                        let actual =
+                            Stylesheet::read_border_region(&mut xml, QName(b"left")).unwrap();
+                        assert_eq!(actual, BorderRegion::default());
+                        let actual =
+                            Stylesheet::read_border_region(&mut xml, QName(b"right")).unwrap();
+                        assert_eq!(actual, BorderRegion::default());
+                        let actual =
+                            Stylesheet::read_border_region(&mut xml, QName(b"top")).unwrap();
+                        assert_eq!(actual, BorderRegion::default());
+                        let actual =
+                            Stylesheet::read_border_region(&mut xml, QName(b"bottom")).unwrap();
+                        assert_eq!(actual, BorderRegion::default());
+                        break;
+                    }
+                    _ => (),
+                }
             }
-        );
+        }
+
+        #[test]
+        fn test_read_border_region_for_all_borders() {
+            let xml_content = r#"
+                <root>
+                    <border>
+                        <left style="double">
+                            <color rgb="FF234567" />
+                        </left>
+                        <right style="thick">
+                            <color rgb="FF234567" />
+                        </right>
+                        <top style="thin">
+                            <color rgb="FF234567" />
+                        </top>
+                        <bottom style="dashed">
+                            <color theme="1" tint="0.78785898899" />
+                        </bottom>
+                    </border>
+                </root>
+                "#;
+            let mut xml = Reader::from_reader(Cursor::new(xml_content));
+            let mut buf = Vec::with_capacity(1024);
+
+            loop {
+                match xml.read_event_into(&mut buf) {
+                    Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"border" => {
+                        let actual =
+                            Stylesheet::read_border_region(&mut xml, QName(b"left")).unwrap();
+                        assert_eq!(
+                            actual,
+                            BorderRegion {
+                                style: Some(BorderStyle::Double),
+                                color: Some(Color::Rgb(Rgb::Custom(35, 69, 103)))
+                            }
+                        );
+                        let actual =
+                            Stylesheet::read_border_region(&mut xml, QName(b"right")).unwrap();
+                        assert_eq!(
+                            actual,
+                            BorderRegion {
+                                style: Some(BorderStyle::Thick),
+                                color: Some(Color::Rgb(Rgb::Custom(35, 69, 103)))
+                            }
+                        );
+                        let actual =
+                            Stylesheet::read_border_region(&mut xml, QName(b"top")).unwrap();
+                        assert_eq!(
+                            actual,
+                            BorderRegion {
+                                style: Some(BorderStyle::Thin),
+                                color: Some(Color::Rgb(Rgb::Custom(35, 69, 103)))
+                            }
+                        );
+                        let actual =
+                            Stylesheet::read_border_region(&mut xml, QName(b"bottom")).unwrap();
+                        assert_eq!(
+                            actual,
+                            BorderRegion {
+                                style: Some(BorderStyle::Dashed),
+                                color: Some(Color::Theme {
+                                    id: 1,
+                                    tint: Some("0.78785898899".into())
+                                })
+                            }
+                        );
+                        break;
+                    }
+                    _ => (),
+                }
+            }
+        }
+
+        #[test]
+        fn test_read_border_region_for_malformed_xml() {
+            let xml_content = r#"
+                <root>
+                    <border>
+                        <left style="double">
+                            <color rgb="FF234567" />
+                        </left
+                    </border>
+                </root>
+                "#;
+            let mut xml = Reader::from_reader(Cursor::new(xml_content));
+            let mut buf = Vec::with_capacity(1024);
+
+            loop {
+                match xml.read_event_into(&mut buf) {
+                    Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"border" => {
+                        let actual = Stylesheet::read_border_region(&mut xml, QName(b"left"))
+                            .err()
+                            .unwrap()
+                            .to_string();
+                        assert_eq!(actual, "ill-formed document: expected `</left>`, but `</left\n                    </border>` was found".to_string());
+                        break;
+                    }
+                    _ => (),
+                }
+            }
+        }
+
+        #[test]
+        fn test_read_border_region_for_eof() {
+            let xml_content = r#"
+                <root>
+                    <border>
+                    <left>
+                "#;
+            let mut xml = Reader::from_reader(Cursor::new(xml_content));
+            let mut buf = Vec::with_capacity(1024);
+
+            loop {
+                match xml.read_event_into(&mut buf) {
+                    Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"border" => {
+                        let actual = Stylesheet::read_border_region(&mut xml, QName(b"left"))
+                            .err()
+                            .unwrap()
+                            .to_string();
+                        assert_eq!(actual, "malformed stream for tag: left".to_string());
+                        break;
+                    }
+                    _ => (),
+                }
+            }
+        }
+
+        #[test]
+        fn test_read_font_for_malformed_xml() {
+            let xml_content = r#"
+                <root>
+                    <fonts>
+                        <font>
+                            <sz val="12" />
+                        </font
+                    </fonts>
+                </root>
+                "#;
+            let mut xml = Reader::from_reader(Cursor::new(xml_content));
+            let mut buf = Vec::with_capacity(1024);
+
+            loop {
+                match xml.read_event_into(&mut buf) {
+                    Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"font" => {
+                        let actual = Stylesheet::read_font(&mut xml, e.name())
+                            .err()
+                            .unwrap()
+                            .to_string();
+                        assert_eq!(actual, "ill-formed document: expected `</font>`, but `</font\n                    </fonts>` was found".to_string());
+                        break;
+                    }
+                    _ => (),
+                }
+            }
+        }
+
+        #[test]
+        fn test_read_font_for_eof() {
+            let xml_content = r#"
+                <root>
+                    <fonts>
+                        <font>
+                "#;
+            let mut xml = Reader::from_reader(Cursor::new(xml_content));
+            let mut buf = Vec::with_capacity(1024);
+
+            loop {
+                match xml.read_event_into(&mut buf) {
+                    Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"font" => {
+                        let actual = Stylesheet::read_font(&mut xml, e.name())
+                            .err()
+                            .unwrap()
+                            .to_string();
+                        assert_eq!(actual, "malformed stream for tag: font".to_string());
+                        break;
+                    }
+                    _ => (),
+                }
+            }
+        }
+
+        #[test]
+        fn test_read_font_for_all_styling() {
+            let xml_content = r#"
+                <root>
+                    <fonts>
+                        <font>
+                            <b/>
+                            <i/>
+                            <u val="underline"/>
+                            <color theme="1"/>
+                            <sz val="21"/>
+                            <name val="Calibri"/>
+                            <family val="2"/>
+                            <scheme val="minor"/>
+                        </font>
+                    </fonts>
+                </root>
+                "#;
+            let mut xml = Reader::from_reader(Cursor::new(xml_content));
+            let mut buf = Vec::with_capacity(1024);
+
+            loop {
+                match xml.read_event_into(&mut buf) {
+                    Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"font" => {
+                        let actual = Stylesheet::read_font(&mut xml, e.name()).unwrap();
+                        assert_eq!(
+                            actual,
+                            FontProperty {
+                                bold: true,
+                                underline: false,
+                                double: true,
+                                italic: true,
+                                size: "21".into(),
+                                color: Color::Theme { id: 1, tint: None },
+                                font: "Calibri".into(),
+                                family: 2,
+                                scheme: "minor".into()
+                            }
+                        );
+
+                        break;
+                    }
+                    _ => (),
+                }
+            }
+        }
+
+        #[test]
+        fn test_read_font_for_no_underline() {
+            let xml_content = r#"
+                <root>
+                    <fonts>
+                        <font>
+                            <b/>
+                            <i/>
+                            <u val="none"/>
+                            <color theme="1"/>
+                            <sz val="21"/>
+                            <name val="Calibri"/>
+                            <family val="2"/>
+                            <scheme val="minor"/>
+                        </font>
+                    </fonts>
+                </root>
+                "#;
+            let mut xml = Reader::from_reader(Cursor::new(xml_content));
+            let mut buf = Vec::with_capacity(1024);
+
+            loop {
+                match xml.read_event_into(&mut buf) {
+                    Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"font" => {
+                        let actual = Stylesheet::read_font(&mut xml, e.name()).unwrap();
+                        assert_eq!(
+                            actual,
+                            FontProperty {
+                                bold: true,
+                                underline: false,
+                                double: false,
+                                italic: true,
+                                size: "21".into(),
+                                color: Color::Theme { id: 1, tint: None },
+                                font: "Calibri".into(),
+                                family: 2,
+                                scheme: "minor".into()
+                            }
+                        );
+
+                        break;
+                    }
+                    _ => (),
+                }
+            }
+        }
+
+        #[test]
+        fn test_read_font_for_underline() {
+            let xml_content = r#"
+                <root>
+                    <fonts>
+                        <font>
+                            <b/>
+                            <i/>
+                            <u/>
+                            <color theme="1"/>
+                            <sz val="21"/>
+                            <name val="Calibri"/>
+                            <family val="2"/>
+                            <scheme val="minor"/>
+                        </font>
+                    </fonts>
+                </root>
+                "#;
+            let mut xml = Reader::from_reader(Cursor::new(xml_content));
+            let mut buf = Vec::with_capacity(1024);
+
+            loop {
+                match xml.read_event_into(&mut buf) {
+                    Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"font" => {
+                        let actual = Stylesheet::read_font(&mut xml, e.name()).unwrap();
+                        assert_eq!(
+                            actual,
+                            FontProperty {
+                                bold: true,
+                                underline: true,
+                                double: false,
+                                italic: true,
+                                size: "21".into(),
+                                color: Color::Theme { id: 1, tint: None },
+                                font: "Calibri".into(),
+                                family: 2,
+                                scheme: "minor".into()
+                            }
+                        );
+
+                        break;
+                    }
+                    _ => (),
+                }
+            }
+        }
+
+        #[test]
+        fn test_read_fill_for_malformed_xml() {
+            let xml_content = r#"
+                <root>
+                    <fills>
+                        <fill>
+                            <patternFill patternType="none" />
+                        </fill
+                    </fills>
+                </root>
+                "#;
+            let mut xml = Reader::from_reader(Cursor::new(xml_content));
+            let mut buf = Vec::with_capacity(1024);
+
+            loop {
+                match xml.read_event_into(&mut buf) {
+                    Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"fills" => {
+                        let actual = Stylesheet::read_fill(&mut xml).err().unwrap().to_string();
+                        assert_eq!(actual, "ill-formed document: expected `</fill>`, but `</fill\n                    </fills>` was found".to_string());
+                        break;
+                    }
+                    _ => (),
+                }
+            }
+        }
+
+        #[test]
+        fn test_read_fill_for_eof() {
+            let xml_content = r#"
+                <root>
+                    <fills>
+                        <fill>
+                "#;
+            let mut xml = Reader::from_reader(Cursor::new(xml_content));
+            let mut buf = Vec::with_capacity(1024);
+
+            loop {
+                match xml.read_event_into(&mut buf) {
+                    Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"fills" => {
+                        let actual = Stylesheet::read_fill(&mut xml).err().unwrap().to_string();
+                        assert_eq!(actual, "malformed stream for tag: fill".to_string());
+                        break;
+                    }
+                    _ => (),
+                }
+            }
+        }
+
+        #[test]
+        fn test_read_fill_for_type_none() {
+            let xml_content = r#"
+                <root>
+                    <fills>
+                        <fill>
+                            <patternFill patternType="none" />
+                        </fill>
+                    </fills>
+                </root>
+                "#;
+            let mut xml = Reader::from_reader(Cursor::new(xml_content));
+            let mut buf = Vec::with_capacity(1024);
+
+            loop {
+                match xml.read_event_into(&mut buf) {
+                    Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"fill" => {
+                        let actual = Stylesheet::read_fill(&mut xml).unwrap();
+                        assert_eq!(
+                            actual,
+                            Fill {
+                                r#type: PatternFill::None,
+                                foreground: None,
+                                background: None
+                            }
+                        );
+
+                        break;
+                    }
+                    _ => (),
+                }
+            }
+        }
+
+        #[test]
+        fn test_read_fill_for_type_gray() {
+            let xml_content = r#"
+                <root>
+                    <fills>
+                        <fill>
+                            <patternFill patternType="gray125" />
+                        </fill>
+                    </fills>
+                </root>
+                "#;
+            let mut xml = Reader::from_reader(Cursor::new(xml_content));
+            let mut buf = Vec::with_capacity(1024);
+
+            loop {
+                match xml.read_event_into(&mut buf) {
+                    Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"fill" => {
+                        let actual = Stylesheet::read_fill(&mut xml).unwrap();
+                        assert_eq!(
+                            actual,
+                            Fill {
+                                r#type: PatternFill::Gray,
+                                foreground: None,
+                                background: None
+                            }
+                        );
+
+                        break;
+                    }
+                    _ => (),
+                }
+            }
+        }
+
+        #[test]
+        fn test_read_fill_for_type_solid() {
+            let xml_content = r#"
+                <root>
+                    <fills>
+                        <fill>
+                            <patternFill patternType="solid">
+                                <fgColor rgb="FF435678"/>
+                                <bgColor rgb="FF432378"/>
+                            </patternFill>
+                        </fill>
+                    </fills>
+                </root>
+                "#;
+            let mut xml = Reader::from_reader(Cursor::new(xml_content));
+            let mut buf = Vec::with_capacity(1024);
+
+            loop {
+                match xml.read_event_into(&mut buf) {
+                    Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"fill" => {
+                        let actual = Stylesheet::read_fill(&mut xml).unwrap();
+                        assert_eq!(
+                            actual,
+                            Fill {
+                                r#type: PatternFill::Solid,
+                                foreground: Some(Color::Rgb(Rgb::Custom(67, 86, 120))),
+                                background: Some(Color::Rgb(Rgb::Custom(67, 35, 120)))
+                            }
+                        );
+
+                        break;
+                    }
+                    _ => (),
+                }
+            }
+        }
+
+        #[test]
+        fn test_get_cell_ref_from_key_and_not_exists() {
+            let mut style = init("tests/workbook03.xlsx");
+            let actual = style.get_cell_ref_from_key(29);
+            assert_eq!(actual, None)
+        }
+
+        #[test]
+        fn test_get_cell_ref_from_key_and_exists() {
+            let mut style = init("tests/workbook03.xlsx");
+            let actual = style.get_cell_ref_from_key(1).unwrap();
+            assert_eq!(
+                actual,
+                CellXf {
+                    number_format: None,
+                    font: Arc::new(FontProperty {
+                        size: "11".into(),
+                        color: Color::Rgb(Rgb::Custom(156, 0, 6,)),
+                        font: "Calibri".into(),
+                        family: 2,
+                        scheme: "minor".into(),
+                        ..Default::default()
+                    }),
+                    fill: Arc::new(Fill {
+                        r#type: PatternFill::Solid,
+                        foreground: Some(Color::Rgb(Rgb::Custom(255, 199, 206))),
+                        ..Default::default()
+                    }),
+                    border: Arc::new(Border {
+                        left: BorderRegion::default(),
+                        right: BorderRegion::default(),
+                        top: BorderRegion::default(),
+                        bottom: BorderRegion::default()
+                    })
+                }
+                .into()
+            );
+        }
+
+        #[test]
+        fn test_get_differential_ref_from_key_and_exists() {
+            let mut style = init("tests/workbook04.xlsx");
+            let actual = style.get_differential_ref_from_key(1).unwrap();
+            assert_eq!(
+                actual,
+                DiffXf {
+                    font: Some(FontProperty {
+                        size: "11".into(),
+                        color: Color::Theme { id: 0, tint: None },
+                        font: "Posterama".into(),
+                        family: 2,
+                        scheme: "major".into(),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }
+                .into()
+            );
+        }
+
+        #[test]
+        fn test_get_differential_ref_from_key_and_not_exists() {
+            let mut style = init("tests/workbook04.xlsx");
+            let actual = style.get_differential_ref_from_key(11);
+            assert_eq!(actual, None)
+        }
+
+        #[test]
+        fn test_get_number_format_ref_from_key_and_exists() {
+            let mut style = init("tests/workbook03.xlsx");
+            let actual = style.get_number_format_ref_from_key(43);
+            assert_eq!(
+                actual,
+                Some(Arc::new(NumberFormat {
+                    id: 43,
+                    format_code: FormatType::Custom(
+                        r#"_(* #,##0.00_);_(* \(#,##0.00\);_(* "-"??_);_(@_)"#.into()
+                    )
+                }))
+            )
+        }
+
+        #[test]
+        fn test_get_number_format_ref_from_key_and_not_exists() {
+            let mut style = init("tests/workbook04.xlsx");
+            let actual = style.get_number_format_ref_from_key(11);
+            assert_eq!(actual, None)
+        }
+
+        #[test]
+        fn test_get_font_ref_from_key_and_exists() {
+            let mut style = init("tests/workbook03.xlsx");
+            let actual = style.get_font_ref_from_key(3);
+            assert_eq!(
+                actual,
+                Some(Arc::new(FontProperty {
+                    size: "18".into(),
+                    color: Color::Theme { id: 3, tint: None },
+                    font: "Calibri Light".into(),
+                    family: 2,
+                    scheme: "major".into(),
+                    ..Default::default()
+                }))
+            )
+        }
+
+        #[test]
+        fn test_get_font_ref_from_key_and_not_exists() {
+            let mut style = init("tests/workbook03.xlsx");
+            let actual = style.get_font_ref_from_key(30);
+            assert_eq!(actual, None)
+        }
+
+        #[test]
+        fn test_get_fill_ref_from_key_and_exists() {
+            let mut style = init("tests/workbook03.xlsx");
+            let actual = style.get_fill_ref_from_key(3);
+            assert_eq!(
+                actual,
+                Some(Arc::new(Fill {
+                    r#type: PatternFill::Solid,
+                    foreground: Some(Color::Rgb(Rgb::Custom(255, 199, 206))),
+                    background: None
+                }))
+            )
+        }
+
+        #[test]
+        fn test_get_fill_ref_from_key_and_not_exists() {
+            let mut style = init("tests/workbook03.xlsx");
+            let actual = style.get_fill_ref_from_key(30);
+            assert_eq!(actual, None)
+        }
+
+        #[test]
+        fn test_get_border_ref_from_key_and_exists() {
+            let mut style = init("tests/workbook03.xlsx");
+            let actual = style.get_border_ref_from_key(3);
+            assert_eq!(
+                actual,
+                Some(Arc::new(Border {
+                    left: BorderRegion::default(),
+                    right: BorderRegion::default(),
+                    top: BorderRegion::default(),
+                    bottom: BorderRegion {
+                        style: Some(BorderStyle::Medium),
+                        color: Some(Color::Theme { id: 4, tint: Some("0.39997558519241921".into()) })
+                    }
+                }))
+            )
+        }
+
+        #[test]
+        fn test_get_border_ref_from_key_and_not_exists() {
+            let mut style = init("tests/workbook03.xlsx");
+            let actual = style.get_border_ref_from_key(30);
+            assert_eq!(actual, None)
+        }
+
     }
 }
