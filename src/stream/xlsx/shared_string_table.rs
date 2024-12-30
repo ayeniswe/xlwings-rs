@@ -34,14 +34,14 @@ enum StringType {
     NoPreserve(String),
 }
 impl<W: Write> XmlWriter<W> for StringType {
-    fn write_xml<'a>(&self, writer: &'a mut Writer<W>) -> Result<&'a mut Writer<W>, XcelmateError> {
+    fn write_xml<'a>(&self, writer: &'a mut Writer<W>, tag_name: &str) -> Result<&'a mut Writer<W>, XcelmateError> {
         match self {
             StringType::Preserve(s) => writer
-                .create_element("t")
+                .create_element(tag_name)
                 .with_attribute(("xml:space", "preserve"))
                 .write_text_content(BytesText::new(s))?,
             StringType::NoPreserve(s) => writer
-                .create_element("t")
+                .create_element(tag_name)
                 .write_text_content(BytesText::new(s))?,
         };
         Ok(writer)
@@ -56,8 +56,8 @@ pub(crate) enum SharedString {
     PlainText(StringType),
 }
 impl<W: Write> XmlWriter<W> for SharedString {
-    fn write_xml<'a>(&self, writer: &'a mut Writer<W>) -> Result<&'a mut Writer<W>, XcelmateError> {
-        let writer = writer.create_element("si");
+    fn write_xml<'a>(&self, writer: &'a mut Writer<W>, tag_name: &'a str) -> Result<&'a mut Writer<W>, XcelmateError> {
+        let writer = writer.create_element(tag_name);
         match self {
             SharedString::RichText(pieces) => {
                 Ok(writer.write_inner_content::<_, XcelmateError>(|writer| {
@@ -66,7 +66,7 @@ impl<W: Write> XmlWriter<W> for SharedString {
                         writer
                             .create_element("r")
                             .write_inner_content::<_, XcelmateError>(|writer| {
-                                piece.write_xml(writer)?;
+                                piece.write_xml(writer, "rPr")?;
                                 Ok(())
                             })?;
                     }
@@ -76,7 +76,7 @@ impl<W: Write> XmlWriter<W> for SharedString {
             SharedString::PlainText(st) => {
                 // <t>
                 Ok(writer.write_inner_content::<_, XcelmateError>(|writer| {
-                    st.write_xml(writer)?;
+                    st.write_xml(writer, "t")?;
                     Ok(())
                 })?)
             }
@@ -93,46 +93,11 @@ struct StringPiece {
     value: StringType,
 }
 impl<W: Write> XmlWriter<W> for StringPiece {
-    fn write_xml<'a>(&self, writer: &'a mut Writer<W>) -> Result<&'a mut Writer<W>, XcelmateError> {
+    fn write_xml<'a>(&self, writer: &'a mut Writer<W>, tag_name: &str) -> Result<&'a mut Writer<W>, XcelmateError> {
         if let Some(props) = &self.props {
-            writer
-                .create_element("rPr")
-                .write_inner_content::<_, XcelmateError>(|writer| {
-                    if props.bold {
-                        writer.create_element("b").write_empty()?;
-                    }
-                    if props.italic {
-                        writer.create_element("i").write_empty()?;
-                    }
-                    if props.double {
-                        writer
-                            .create_element("u")
-                            .with_attribute(("val", "double"))
-                            .write_empty()?;
-                    } else if props.underline {
-                        writer.create_element("u").write_empty()?;
-                    }
-                    writer
-                        .create_element("sz")
-                        .with_attribute(("val", props.size.as_str()))
-                        .write_empty()?;
-                    props.color.write_xml(writer)?;
-                    writer
-                        .create_element("rFont")
-                        .with_attribute(("val", props.font.as_str()))
-                        .write_empty()?;
-                    writer
-                        .create_element("family")
-                        .with_attribute(("val", props.family.to_string().as_str()))
-                        .write_empty()?;
-                    writer
-                        .create_element("scheme")
-                        .with_attribute(("val", props.scheme.as_str()))
-                        .write_empty()?;
-                    Ok(())
-                })?;
+            props.write_xml(writer, tag_name)?;
         }
-        self.value.write_xml(writer)?;
+        self.value.write_xml(writer, "t")?;
         Ok(writer)
     }
 }
@@ -148,14 +113,14 @@ pub(crate) struct SharedStringTable {
     count: u32,
 }
 impl<W: Write> XmlWriter<W> for SharedStringTable {
-    fn write_xml<'a>(&self, writer: &'a mut Writer<W>) -> Result<&'a mut Writer<W>, XcelmateError> {
+    fn write_xml<'a>(&self, writer: &'a mut Writer<W>, tag_name: &str) -> Result<&'a mut Writer<W>, XcelmateError> {
         writer.write_event(Event::Decl(BytesDecl::new(
             "1.0",
             Some("UTF-8"),
             Some("yes"),
         )))?;
         writer
-            .create_element("sst")
+            .create_element(tag_name)
             .with_attribute((
                 "xmlns",
                 "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
@@ -163,8 +128,9 @@ impl<W: Write> XmlWriter<W> for SharedStringTable {
             .with_attribute(("count", self.count.to_string().as_str()))
             .with_attribute(("uniqueCount", self.table.len().to_string().as_str()))
             .write_inner_content::<_, XcelmateError>(|writer| {
+                // <si>
                 for (si, _) in self.table.right_range(0..self.table.len()) {
-                    si.write_xml(writer)?;
+                    si.write_xml(writer, "si")?;
                 }
                 Ok(())
             })?;
@@ -508,7 +474,7 @@ impl SharedStringTable {
 impl<W: Write + Seek, EX: FileOptionExtension> Save<W, EX> for SharedStringTable {
     fn save(&mut self, writer: &mut zip::ZipWriter<W>, options: FileOptions<EX>) -> Result<(), XcelmateError> {
         writer.start_file("xl/sharedStrings.xml", options)?;
-        self.write_xml(&mut Writer::new(writer))?;
+        self.write_xml(&mut Writer::new(writer), "sst")?;
         Ok(())
     }
 }
@@ -967,7 +933,7 @@ mod shared_string_unittests {
 
         #[test]
         fn save_file() {
-            let mut sst = init("tests/workbook04.xlsx");
+            let mut sst = init("tests/workbook01.xlsx");
             let mut zip = ZipWriter::new(Cursor::new(Vec::<u8>::new()));
             sst.save(&mut zip, SimpleFileOptions::default().compression_method(CompressionMethod::Deflated)).unwrap();
 

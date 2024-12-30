@@ -32,7 +32,7 @@ pub(crate) fn xml_reader<'a, RS: Read + Seek>(
 
 pub(crate) trait XmlWriter<W: Write> {
     /// Allows us to piece up how we will write from objects to xml
-    fn write_xml<'a>(&self, writer: &'a mut Writer<W>) -> Result<&'a mut Writer<W>, XcelmateError>;
+    fn write_xml<'a>(&self, writer: &'a mut Writer<W>, tag_name: &'a str) -> Result<&'a mut Writer<W>, XcelmateError>;
 }
 
 pub(crate) trait Save<W: Write + Seek, EX: FileOptionExtension>: XmlWriter<W> {

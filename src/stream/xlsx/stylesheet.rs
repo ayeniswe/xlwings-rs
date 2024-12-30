@@ -3,11 +3,7 @@ use crate::{
     stream::utils::{xml_reader, Key, XmlWriter},
 };
 use bimap::BiMap;
-use quick_xml::{
-    events::{BytesText, Event},
-    name::QName,
-    Reader, Writer,
-};
+use quick_xml::{events::Event, name::QName, Reader, Writer};
 use std::{
     collections::HashMap,
     io::{BufRead, Read, Seek, Write},
@@ -23,7 +19,12 @@ pub(crate) enum Rgb {
 impl ToString for Rgb {
     fn to_string(&self) -> String {
         match self {
-            Rgb::Custom(r, g, b) =>  format!("FF{}{}{}", format!("{:02X}", r), &format!("{:02X}", g), &format!("{:02X}", b))
+            Rgb::Custom(r, g, b) => format!(
+                "FF{}{}{}",
+                format!("{:02X}", r),
+                &format!("{:02X}", g),
+                &format!("{:02X}", b)
+            ),
         }
     }
 }
@@ -45,8 +46,8 @@ impl Default for Color {
     }
 }
 impl<W: Write> XmlWriter<W> for Color {
-    fn write_xml<'a>(&self, writer: &'a mut Writer<W>) -> Result<&'a mut Writer<W>, XcelmateError> {
-        let writer = writer.create_element("color");
+    fn write_xml<'a>(&self, writer: &'a mut Writer<W>, tag_name: &'a str) -> Result<&'a mut Writer<W>, XcelmateError> {
+        let writer = writer.create_element(tag_name);
         match self {
             Color::Theme { id, tint } => {
                 let writer = writer.with_attribute(("theme", id.to_string().as_str()));
@@ -57,10 +58,10 @@ impl<W: Write> XmlWriter<W> for Color {
                     Ok(writer.write_empty()?)
                 }
             }
-            Color::Rgb(rgb) =>  {
+            Color::Rgb(rgb) => {
                 let writer = writer.with_attribute(("rgb", rgb.to_string().as_str()));
                 Ok(writer.write_empty()?)
-            },
+            }
         }
     }
 }
@@ -84,11 +85,69 @@ pub(crate) struct FontProperty {
     pub(crate) scheme: String,
 }
 
+impl<W: Write> XmlWriter<W> for FontProperty {
+    fn write_xml<'a>(&self, writer: &'a mut Writer<W>, tag_name: &str) -> Result<&'a mut Writer<W>, XcelmateError> {
+        writer
+            .create_element(tag_name)
+            .write_inner_content::<_, XcelmateError>(|writer| {
+                if self.bold {
+                    writer.create_element("b").write_empty()?;
+                }
+                if self.italic {
+                    writer.create_element("i").write_empty()?;
+                }
+                if self.double {
+                    writer
+                        .create_element("u")
+                        .with_attribute(("val", "double"))
+                        .write_empty()?;
+                } else if self.underline {
+                    writer.create_element("u").write_empty()?;
+                }
+                writer
+                    .create_element("sz")
+                    .with_attribute(("val", self.size.as_str()))
+                    .write_empty()?;
+                self.color.write_xml(writer, "color")?;
+                writer
+                    .create_element(if tag_name == "font" {"name"} else {"rFont"})//the similarity of rich text and font tags are identical except for this
+                    .with_attribute(("val", self.font.as_str()))
+                    .write_empty()?;
+                writer
+                    .create_element("family")
+                    .with_attribute(("val", self.family.to_string().as_str()))
+                    .write_empty()?;
+                writer
+                    .create_element("scheme")
+                    .with_attribute(("val", self.scheme.as_str()))
+                    .write_empty()?;
+                Ok(())
+            })?;
+
+        Ok(writer)
+    }
+}
+
 /// The formatting style to use on numbers
 #[derive(Debug, PartialEq, Default, Clone, Eq, PartialOrd, Hash, Ord)]
 pub(crate) struct NumberFormat {
     id: u32,
     format_code: FormatType,
+}
+impl<W: Write> XmlWriter<W> for NumberFormat {
+    fn write_xml<'a>(&self, writer: &'a mut Writer<W>, tag_name: &str) -> Result<&'a mut Writer<W>, XcelmateError> {
+        if let FormatType::Custom(code) = &self.format_code {
+            writer
+                .create_element(tag_name)
+                .with_attributes(vec![
+                    ("numFmtId", self.id.to_string().as_str()),
+                    ("formatCode", code.as_str()),
+                ])
+                .write_empty()?;
+        }
+
+        Ok(writer)
+    }
 }
 
 /// The enum helps determine what to include in final write to file for number formats
@@ -108,6 +167,15 @@ enum PatternFill {
     Solid,
     Gray,
 }
+impl<W: Write> XmlWriter<W> for PatternFill {
+    fn write_xml<'a>(&self, writer: &'a mut Writer<W>, tag_name: &'a str) -> Result<&'a mut Writer<W>, XcelmateError> {
+        match self {
+            PatternFill::None => Ok(writer.create_element(tag_name).with_attribute(("patternType", "none")).write_empty()?),
+            PatternFill::Gray => Ok(writer.create_element(tag_name).with_attribute(("patternType", "gray125")).write_empty()?),
+            _ => Ok(writer),
+        }
+    }
+}
 
 /// The background/foreground fill of a cell. Also can include gradients
 #[derive(Debug, PartialEq, Default, Clone, Eq, PartialOrd, Hash, Ord)]
@@ -115,6 +183,31 @@ pub(crate) struct Fill {
     r#type: PatternFill,
     foreground: Option<Color>,
     background: Option<Color>,
+}
+impl<W: Write> XmlWriter<W> for Fill {
+    fn write_xml<'a>(&self, writer: &'a mut Writer<W>, tag_name: &'a str) -> Result<&'a mut Writer<W>, XcelmateError> {
+        let writer = writer
+            .create_element(tag_name)
+            .write_inner_content::<_, XcelmateError>(|writer| {
+                match self.r#type {
+                    PatternFill::Solid => writer
+                        .create_element("patternFill")
+                        .with_attribute(("patternType", "solid"))
+                        .write_inner_content::<_, XcelmateError>(|writer| {
+                            if let Some(fg) = &self.foreground {
+                                fg.write_xml(writer, "fgColor")?;
+                            }
+                            if let Some(bg) = &self.background {
+                                bg.write_xml(writer, "bgColor")?;
+                            }
+                            Ok(())
+                        })?,
+                    _ => self.r#type.write_xml(writer, "patternFill")?,
+                };
+                Ok(())
+            });
+        Ok(writer?)
+    }
 }
 
 /// The type of line styling for a border
