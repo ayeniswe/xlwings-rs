@@ -196,9 +196,7 @@ impl<W: Write> XmlWriter<W> for FontProperty {
                     FormatState::None => writer,
                 };
                 match (&self.underline, &self.double) {
-                    (FormatState::Enabled, _) => {
-                        writer.create_element("u").write_empty()?
-                    }
+                    (FormatState::Enabled, _) => writer.create_element("u").write_empty()?,
                     (FormatState::Disabled, _) => writer
                         .create_element("u")
                         .with_attribute(("val", "none"))
@@ -503,6 +501,7 @@ pub(crate) struct DiffXf {
     font: Option<FontProperty>,
     fill: Option<Fill>,
     border: Option<Border>,
+    dup_cnt: usize,
 }
 impl<W: Write> XmlWriter<W> for DiffXf {
     fn write_xml<'a>(
@@ -573,8 +572,7 @@ pub(crate) struct Stylesheet {
     fills: BiBTreeMap<Arc<Fill>, Key>,
     borders: BiBTreeMap<Arc<Border>, Key>,
     cell_xf: BiBTreeMap<Arc<CellXf>, Key>,
-    diff_xf: HashMap<Arc<DiffXf>, Key>,
-    diff_xf_with_dups: Vec<Arc<DiffXf>>, // Duplicates can exist
+    diff_xf: BiBTreeMap<Arc<DiffXf>, Key>,
     table_style: Option<TableStyle>,
 }
 impl<W: Write> XmlWriter<W> for Stylesheet {
@@ -744,9 +742,9 @@ impl<W: Write> XmlWriter<W> for Stylesheet {
                 // <dxfs>
                 let _ = writer
                     .create_element("dxfs")
-                    .with_attribute(("count", self.diff_xf_with_dups.len().to_string().as_str()))
+                    .with_attribute(("count", self.diff_xf.len().to_string().as_str()))
                     .write_inner_content::<_, XcelmateError>(|writer| {
-                        for diff_xf in &self.diff_xf_with_dups {
+                        for (diff_xf, _) in self.diff_xf.right_range(0..self.diff_xf.len()) {
                             let _ = writer
                                 .create_element("dxf")
                                 .write_inner_content::<_, XcelmateError>(|writer| {
@@ -1043,7 +1041,7 @@ impl Stylesheet {
                     }
                 }
                 ////////////////////
-                // TABLE CUSTOM REFERENCE
+                // DIFFERENTIAL REFERENCE
                 /////////////
                 Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"dxf" => {
                     let mut dx_buf = Vec::with_capacity(1024);
@@ -1052,7 +1050,7 @@ impl Stylesheet {
                         dx_buf.clear();
                         match xml.read_event_into(&mut dx_buf) {
                             ////////////////////
-                            // TABLE CUSTOM REFERENCE nth-1
+                            // DIFFERENTIAL REFERENCE nth-1
                             /////////////
                             Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"font" => {
                                 diff_xf.font = Some(Stylesheet::read_font(&mut xml, e.name())?);
@@ -1085,13 +1083,15 @@ impl Stylesheet {
                             _ => (),
                         }
                     }
-                    let diff_xf = Arc::new(diff_xf);
 
-                    // Since duplication can occur with custom tabling styles we must use a vector/map instead of bimap
-                    let key = self.diff_xf_with_dups.len();
-                    self.diff_xf_with_dups.push(diff_xf.clone());
-
-                    self.diff_xf.insert(diff_xf, key);
+                    // Allow duplicates by increment dup count so all duplicate reflect their respective duplicate count
+                    if let Some(id) = self.get_key_from_differential_ref(diff_xf.clone().into()) {
+                        let dup_cnt = self.get_differential_ref_from_key(id).unwrap().dup_cnt + 1;
+                        diff_xf.dup_cnt = dup_cnt;
+                        let _ = self.add_differential_ref_to_table(diff_xf.into());
+                    } else {
+                        let _ = self.add_differential_ref_to_table(diff_xf.into());
+                    }
                 }
                 ////////////////////
                 // TABLE STYLE
@@ -1259,7 +1259,7 @@ impl Stylesheet {
     }
 
     pub(crate) fn get_key_from_differential_ref(&self, key: Arc<DiffXf>) -> Option<usize> {
-        if let Some(i) = self.diff_xf.get(&key) {
+        if let Some(i) = self.diff_xf.get_by_left(&key) {
             Some(*i)
         } else {
             None
@@ -1267,7 +1267,7 @@ impl Stylesheet {
     }
 
     pub(crate) fn get_differential_ref_from_key(&self, key: Key) -> Option<Arc<DiffXf>> {
-        if let Some(i) = self.diff_xf_with_dups.get(key) {
+        if let Some(i) = self.diff_xf.get_by_right(&key) {
             Some(i.clone())
         } else {
             None
@@ -1275,9 +1275,7 @@ impl Stylesheet {
     }
 
     pub(crate) fn add_differential_ref_to_table(&mut self, item: Arc<DiffXf>) -> Arc<DiffXf> {
-        self.diff_xf_with_dups.push(item.clone());
-        self.diff_xf
-            .insert(item.clone(), self.diff_xf_with_dups.len());
+        self.diff_xf.insert(item.clone(), self.diff_xf.len());
         item
     }
 
@@ -1699,6 +1697,16 @@ impl Stylesheet {
                     }
                 }
                 Ok(Event::Empty(ref e)) if e.local_name().as_ref() == b"name" => {
+                    for attr in e.attributes() {
+                        if let Ok(a) = attr {
+                            match a.key {
+                                QName(b"val") => font.font = a.unescape_value()?.to_string(),
+                                _ => (),
+                            }
+                        }
+                    }
+                }
+                Ok(Event::Empty(ref e)) if e.local_name().as_ref() == b"rFont" => {
                     for attr in e.attributes() {
                         if let Ok(a) = attr {
                             match a.key {

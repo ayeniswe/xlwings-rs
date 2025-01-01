@@ -225,125 +225,10 @@ impl SharedStringTable {
                     }
                 }
                 Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"rPr" => {
-                    if props.is_none() {
-                        props = Some(FontProperty::default());
-                    }
+                    props = Some(Stylesheet::read_font(xml, e.name())?);
                 }
                 Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"rPh" => {
                     is_phonetic_text = true;
-                }
-                Ok(Event::Empty(ref e)) if e.local_name().as_ref() == b"sz" => {
-                    if let Some(p) = props.as_mut() {
-                        for attr in e.attributes() {
-                            if let Ok(a) = attr {
-                                match a.key {
-                                    QName(b"val") => p.size = a.unescape_value()?.to_string(),
-                                    _ => (),
-                                }
-                            }
-                        }
-                    }
-                }
-                Ok(Event::Empty(ref e)) if e.local_name().as_ref() == b"color" => {
-                    if let Some(p) = props.as_mut() {
-                        for attr in e.attributes() {
-                            if let Ok(a) = attr {
-                                match a.key {
-                                    QName(b"rgb") => {
-                                        p.color =
-                                            Stylesheet::to_rgb(a.unescape_value()?.to_string())?;
-                                    }
-                                    QName(b"theme") => {
-                                        p.color = Color::Theme {
-                                            id: a.unescape_value()?.parse::<u32>()?,
-                                            tint: None,
-                                        };
-                                    }
-                                    QName(b"tint") => match p.color {
-                                        Color::Theme { id, .. } => {
-                                            p.color = Color::Theme {
-                                                id,
-                                                tint: Some(a.unescape_value()?.to_string()),
-                                            }
-                                        }
-                                        _ => (),
-                                    },
-                                    _ => (),
-                                }
-                            }
-                        }
-                    }
-                }
-                Ok(Event::Empty(ref e)) if e.local_name().as_ref() == b"rFont" => {
-                    if let Some(p) = props.as_mut() {
-                        for attr in e.attributes() {
-                            if let Ok(a) = attr {
-                                match a.key {
-                                    QName(b"val") => p.font = a.unescape_value()?.to_string(),
-                                    _ => (),
-                                }
-                            }
-                        }
-                    }
-                }
-                Ok(Event::Empty(ref e)) if e.local_name().as_ref() == b"family" => {
-                    if let Some(p) = props.as_mut() {
-                        for attr in e.attributes() {
-                            if let Ok(a) = attr {
-                                match a.key {
-                                    QName(b"val") => {
-                                        p.family = a.unescape_value()?.parse::<u32>()?
-                                    }
-                                    _ => (),
-                                }
-                            }
-                        }
-                    }
-                }
-                Ok(Event::Empty(ref e)) if e.local_name().as_ref() == b"scheme" => {
-                    if let Some(p) = props.as_mut() {
-                        for attr in e.attributes() {
-                            if let Ok(a) = attr {
-                                match a.key {
-                                    QName(b"val") => p.scheme = a.unescape_value()?.to_string(),
-                                    _ => (),
-                                }
-                            }
-                        }
-                    }
-                }
-                Ok(Event::Empty(ref e)) if e.local_name().as_ref() == b"b" => {
-                    if let Some(p) = props.as_mut() {
-                        p.bold = true
-                    }
-                }
-                Ok(Event::Empty(ref e)) if e.local_name().as_ref() == b"i" => {
-                    if let Some(p) = props.as_mut() {
-                        p.italic = true
-                    }
-                }
-                Ok(Event::Empty(ref e)) if e.local_name().as_ref() == b"u" => {
-                    if let Some(p) = props.as_mut() {
-                        p.underline = true;
-                        for attr in e.attributes() {
-                            if let Ok(a) = attr {
-                                match a.key {
-                                    QName(b"val") => {
-                                        match a.unescape_value()?.to_string().as_str() {
-                                            "double" => {
-                                                p.double = true;
-                                                // No longer can be true if doubled
-                                                p.underline = false;
-                                            }
-                                            "none" => p.underline = false,
-                                            _ => (),
-                                        }
-                                    }
-                                    _ => (),
-                                }
-                            }
-                        }
-                    }
                 }
                 Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"t" && !is_phonetic_text => {
                     val_buf.clear();
@@ -509,7 +394,7 @@ mod shared_string_unittests {
 
     mod shared_string_api {
         use crate::stream::{
-            utils::{Save, XmlWriter},
+            utils::Save,
             xlsx::{
                 shared_string_table::{
                     Color, FontProperty, Rgb, SharedString, SharedStringTable, StringPiece,
@@ -518,13 +403,7 @@ mod shared_string_unittests {
                 stylesheet::FormatState,
             },
         };
-        use quick_xml::Writer;
-        use std::{
-            fs::File,
-            io::{BufRead, Cursor},
-            str::Lines,
-            sync::Arc,
-        };
+        use std::{fs::File, io::Cursor, sync::Arc};
         use zip::{write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
 
         fn init(path: &str) -> SharedStringTable {
