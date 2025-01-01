@@ -3,28 +3,22 @@ use crate::{
     errors::XcelmateError,
     stream::utils::{xml_reader, Key, Save, XmlWriter},
 };
-use bimap::{BiBTreeMap, BiMap};
+use bimap::BiBTreeMap;
 use quick_xml::{
-    events::{attributes::Attribute, BytesDecl, BytesStart, BytesText, Event},
+    events::{attributes::Attribute, BytesDecl, BytesText, Event},
     name::QName,
     Reader, Writer,
 };
 use std::{
-    borrow::{Borrow, Cow},
-    collections::HashMap,
-    io::{BufRead, BufReader, Read, Seek, Write},
+    borrow::Cow,
+    io::{BufRead, Read, Seek, Write},
     sync::Arc,
 };
 use zip::{
-    read::ZipFile,
     write::{FileOptionExtension, FileOptions},
     ZipArchive,
 };
-
-use super::{
-    stylesheet::{Color, FontProperty, Rgb},
-    Stylesheet,
-};
+use super::{stylesheet::FontProperty, Stylesheet};
 
 type SharedStringRef = Arc<SharedString>;
 
@@ -397,10 +391,9 @@ mod shared_string_unittests {
             utils::Save,
             xlsx::{
                 shared_string_table::{
-                    Color, FontProperty, Rgb, SharedString, SharedStringTable, StringPiece,
-                    StringType,
+                    FontProperty, SharedString, SharedStringTable, StringPiece, StringType,
                 },
-                stylesheet::FormatState,
+                stylesheet::{Color, FormatState, Rgb},
             },
         };
         use std::{fs::File, io::Cursor, sync::Arc};
