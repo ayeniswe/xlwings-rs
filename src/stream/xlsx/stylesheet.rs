@@ -890,9 +890,7 @@ impl Stylesheet {
                 /////////////
                 Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"fill" => {
                     let fill = Stylesheet::read_fill(&mut xml)?;
-                    let key = self.fills.len();
-                    let fill = Arc::new(fill);
-                    self.fills.insert(fill, key);
+                    self.add_fill_ref_to_table(fill.into());
                 }
                 ////////////////////
                 // BORDER
@@ -904,9 +902,7 @@ impl Stylesheet {
                     border.top = Stylesheet::read_border_region(&mut xml, QName(b"top"))?;
                     border.bottom = Stylesheet::read_border_region(&mut xml, QName(b"bottom"))?;
                     border.diagonal = Stylesheet::read_border_region(&mut xml, QName(b"diagonal"))?;
-                    let key = self.borders.len();
-                    let border = Arc::new(border);
-                    self.borders.insert(border, key);
+                    self.add_border_ref_to_table(border.into());
                 }
                 ////////////////////
                 // CELL REFERENCES
@@ -1200,8 +1196,8 @@ impl Stylesheet {
                             Ok(Event::End(ref e)) if e.local_name().as_ref() == b"tableStyle" => {
                                 table_style
                                     .styles
-                                    .insert(custom_style.name.clone(), Arc::new(custom_style));
-                                // Reset style interation
+                                    .insert(custom_style.name.clone(), custom_style.into());
+                                // Reset custom style buffer
                                 custom_style = TableCustomStyle::default();
                             }
                             Ok(Event::End(ref e)) if e.local_name().as_ref() == b"tableStyles" => {
@@ -1214,7 +1210,7 @@ impl Stylesheet {
                             _ => (),
                         }
                     }
-                    self.table_style = Some(table_style);
+                    self.add_table_style(table_style.into());
                 }
                 Ok(Event::End(ref e)) if e.local_name().as_ref() == b"styleSheet" => break,
                 Ok(Event::Eof) => return Err(XcelmateError::XmlEof("styleSheet".into())),
@@ -1233,8 +1229,24 @@ impl Stylesheet {
         }
     }
 
-    pub(crate) fn add_custom_table_style(&self, name: &str) -> Option<Arc<TableCustomStyle>> {
-        todo!()
+    pub(crate) fn add_custom_table_style(
+        &mut self,
+        name: &str,
+        style: Arc<TableCustomStyle>,
+    ) -> Arc<TableCustomStyle> {
+        if let Some(table) = &mut self.table_style {
+            table.styles.insert(name.into(), style.clone());
+        } else {
+            self.table_style = Some(TableStyle {
+                styles: HashMap::from_iter(vec![(name.into(), style.clone())]),
+                ..Default::default()
+            });
+        }
+        style
+    }
+
+    pub(crate) fn add_table_style(&mut self, table: TableStyle) {
+        self.table_style = Some(table);
     }
 
     pub(crate) fn get_key_from_cell_ref(&self, key: Arc<CellXf>) -> Option<usize> {
@@ -1909,7 +1921,7 @@ mod stylesheet_unittests {
 
         #[test]
         fn get_custom_table_style() {
-            let mut style = init("tests/workbook04.xlsx");
+            let style = init("tests/workbook04.xlsx");
             let actual = style.get_custom_table_style("Customer Contact List");
             assert!(actual.is_some())
         }
@@ -2022,6 +2034,42 @@ mod stylesheet_unittests {
                                 })
                             }
                         );
+                        // let actual =
+                        //     Stylesheet::read_border_region(&mut xml, QName(b"vertical")).unwrap();
+                        // assert_eq!(
+                        //     actual,
+                        //     BorderRegion {
+                        //         style: Some(BorderStyle::Dashed),
+                        //         color: Some(Color::Theme {
+                        //             id: 2,
+                        //             tint: Some("0.78785898899".into())
+                        //         })
+                        //     }
+                        // );
+                        // let actual =
+                        //     Stylesheet::read_border_region(&mut xml, QName(b"horizontal")).unwrap();
+                        // assert_eq!(
+                        //     actual,
+                        //     BorderRegion {
+                        //         style: Some(BorderStyle::Dashed),
+                        //         color: Some(Color::Theme {
+                        //             id: 3,
+                        //             tint: Some("0.78785898899".into())
+                        //         })
+                        //     }
+                        // );
+                        // let actual =
+                        //     Stylesheet::read_border_region(&mut xml, QName(b"diagonal")).unwrap();
+                        // assert_eq!(
+                        //     actual,
+                        //     BorderRegion {
+                        //         style: Some(BorderStyle::Dashed),
+                        //         color: Some(Color::Theme {
+                        //             id: 4,
+                        //             tint: Some("0.78785898899".into())
+                        //         })
+                        //     }
+                        // );
                         break;
                     }
                     _ => (),
