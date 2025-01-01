@@ -510,8 +510,12 @@ mod shared_string_unittests {
     mod shared_string_api {
         use crate::stream::{
             utils::{Save, XmlWriter},
-            xlsx::shared_string_table::{
-                Color, FontProperty, Rgb, SharedString, SharedStringTable, StringPiece, StringType,
+            xlsx::{
+                shared_string_table::{
+                    Color, FontProperty, Rgb, SharedString, SharedStringTable, StringPiece,
+                    StringType,
+                },
+                stylesheet::FormatState,
             },
         };
         use quick_xml::Writer;
@@ -541,10 +545,9 @@ mod shared_string_unittests {
                 },
                 StringPiece {
                     props: Some(FontProperty {
-                        bold: true,
-                        underline: true,
-                        double: false,
-                        italic: true,
+                        bold: FormatState::Enabled,
+                        underline: FormatState::Enabled,
+                        italic: FormatState::Enabled,
                         size: "11".into(),
                         color: Color::Theme { id: 1, tint: None },
                         font: "Calibri".into(),
@@ -556,10 +559,7 @@ mod shared_string_unittests {
                 },
                 StringPiece {
                     props: Some(FontProperty {
-                        bold: true,
-                        underline: false,
-                        double: false,
-                        italic: false,
+                        bold: FormatState::Enabled,
                         size: "11".into(),
                         color: Color::Theme { id: 1, tint: None },
                         font: "Calibri".into(),
@@ -571,10 +571,6 @@ mod shared_string_unittests {
                 },
                 StringPiece {
                     props: Some(FontProperty {
-                        bold: false,
-                        underline: false,
-                        double: false,
-                        italic: false,
                         size: "11".into(),
                         color: Color::Theme { id: 1, tint: None },
                         font: "Calibri".into(),
@@ -586,10 +582,7 @@ mod shared_string_unittests {
                 },
                 StringPiece {
                     props: Some(FontProperty {
-                        bold: false,
-                        underline: false,
-                        double: false,
-                        italic: true,
+                        italic: FormatState::Enabled,
                         size: "11".into(),
                         color: Color::Theme { id: 1, tint: None },
                         font: "Calibri".into(),
@@ -601,10 +594,7 @@ mod shared_string_unittests {
                 },
                 StringPiece {
                     props: Some(FontProperty {
-                        bold: false,
-                        underline: true,
-                        double: false,
-                        italic: false,
+                        underline: FormatState::Enabled,
                         size: "11".into(),
                         color: Color::Theme { id: 1, tint: None },
                         font: "Calibri".into(),
@@ -616,10 +606,6 @@ mod shared_string_unittests {
                 },
                 StringPiece {
                     props: Some(FontProperty {
-                        bold: false,
-                        underline: false,
-                        double: false,
-                        italic: false,
                         size: "11".into(),
                         color: Color::Theme { id: 1, tint: None },
                         font: "Calibri".into(),
@@ -631,10 +617,6 @@ mod shared_string_unittests {
                 },
                 StringPiece {
                     props: Some(FontProperty {
-                        bold: false,
-                        underline: false,
-                        double: false,
-                        italic: false,
                         size: "11".into(),
                         color: Color::Theme {
                             id: 5,
@@ -649,10 +631,6 @@ mod shared_string_unittests {
                 },
                 StringPiece {
                     props: Some(FontProperty {
-                        bold: false,
-                        underline: false,
-                        double: false,
-                        italic: false,
                         size: "11".into(),
                         color: Color::Theme { id: 1, tint: None },
                         font: "Calibri".into(),
@@ -664,10 +642,7 @@ mod shared_string_unittests {
                 },
                 StringPiece {
                     props: Some(FontProperty {
-                        bold: false,
-                        underline: false,
-                        double: true,
-                        italic: false,
+                        double: FormatState::Enabled,
                         size: "11".into(),
                         color: Color::Theme { id: 1, tint: None },
                         font: "Calibri".into(),
@@ -679,10 +654,6 @@ mod shared_string_unittests {
                 },
                 StringPiece {
                     props: Some(FontProperty {
-                        bold: false,
-                        underline: false,
-                        double: false,
-                        italic: false,
                         size: "11".into(),
                         color: Color::Theme { id: 1, tint: None },
                         font: "Calibri".into(),
@@ -694,10 +665,6 @@ mod shared_string_unittests {
                 },
                 StringPiece {
                     props: Some(FontProperty {
-                        bold: false,
-                        underline: false,
-                        double: false,
-                        italic: false,
                         size: "11".into(),
                         color: Color::Rgb(Rgb::Custom(186, 155, 203)),
                         font: "Calibri".into(),
@@ -725,10 +692,10 @@ mod shared_string_unittests {
                 },
                 StringPiece {
                     props: Some(FontProperty {
-                        bold: true,
-                        underline: true,
-                        double: false,
-                        italic: true,
+                        bold: FormatState::Enabled,
+                        underline: FormatState::Enabled,
+
+                        italic: FormatState::Enabled,
                         size: "11".into(),
                         color: Color::Theme { id: 1, tint: None },
                         font: "Calibri".into(),
@@ -740,10 +707,7 @@ mod shared_string_unittests {
                 },
                 StringPiece {
                     props: Some(FontProperty {
-                        bold: true,
-                        underline: false,
-                        double: false,
-                        italic: false,
+                        bold: FormatState::Enabled,
                         size: "11".into(),
                         color: Color::Theme { id: 1, tint: None },
                         font: "Calibri".into(),
@@ -755,10 +719,6 @@ mod shared_string_unittests {
                 },
                 StringPiece {
                     props: Some(FontProperty {
-                        bold: false,
-                        underline: false,
-                        double: false,
-                        italic: false,
                         size: "11".into(),
                         color: Color::Theme { id: 1, tint: None },
                         font: "Calibri".into(),
@@ -770,10 +730,7 @@ mod shared_string_unittests {
                 },
                 StringPiece {
                     props: Some(FontProperty {
-                        bold: false,
-                        underline: false,
-                        double: false,
-                        italic: true,
+                        italic: FormatState::Enabled,
                         size: "11".into(),
                         color: Color::Theme { id: 1, tint: None },
                         font: "Calibri".into(),
@@ -785,10 +742,7 @@ mod shared_string_unittests {
                 },
                 StringPiece {
                     props: Some(FontProperty {
-                        bold: false,
-                        underline: true,
-                        double: false,
-                        italic: false,
+                        underline: FormatState::Enabled,
                         size: "11".into(),
                         color: Color::Theme { id: 1, tint: None },
                         font: "Calibri".into(),
@@ -800,10 +754,6 @@ mod shared_string_unittests {
                 },
                 StringPiece {
                     props: Some(FontProperty {
-                        bold: false,
-                        underline: false,
-                        double: false,
-                        italic: false,
                         size: "11".into(),
                         color: Color::Theme { id: 1, tint: None },
                         font: "Calibri".into(),
@@ -815,10 +765,6 @@ mod shared_string_unittests {
                 },
                 StringPiece {
                     props: Some(FontProperty {
-                        bold: false,
-                        underline: false,
-                        double: false,
-                        italic: false,
                         size: "11".into(),
                         color: Color::Theme {
                             id: 5,
@@ -833,10 +779,6 @@ mod shared_string_unittests {
                 },
                 StringPiece {
                     props: Some(FontProperty {
-                        bold: false,
-                        underline: false,
-                        double: false,
-                        italic: false,
                         size: "11".into(),
                         color: Color::Theme { id: 1, tint: None },
                         font: "Calibri".into(),
@@ -848,10 +790,7 @@ mod shared_string_unittests {
                 },
                 StringPiece {
                     props: Some(FontProperty {
-                        bold: false,
-                        underline: false,
-                        double: true,
-                        italic: false,
+                        double: FormatState::Enabled,
                         size: "11".into(),
                         color: Color::Theme { id: 1, tint: None },
                         font: "Calibri".into(),
@@ -863,10 +802,6 @@ mod shared_string_unittests {
                 },
                 StringPiece {
                     props: Some(FontProperty {
-                        bold: false,
-                        underline: false,
-                        double: false,
-                        italic: false,
                         size: "11".into(),
                         color: Color::Theme { id: 1, tint: None },
                         font: "Calibri".into(),
@@ -878,10 +813,6 @@ mod shared_string_unittests {
                 },
                 StringPiece {
                     props: Some(FontProperty {
-                        bold: false,
-                        underline: false,
-                        double: false,
-                        italic: false,
                         size: "11".into(),
                         color: Color::Rgb(Rgb::Custom(186, 155, 203)),
                         font: "Calibrri".into(),

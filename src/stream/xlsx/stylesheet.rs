@@ -91,15 +91,34 @@ impl<W: Write> XmlWriter<W> for Color {
     }
 }
 
+/// Some `FontProperty` values can be used in conditional scenarios so being able to override base styles
+/// requires a tri value
+#[derive(Debug, Default, Clone, PartialEq, Eq, PartialOrd, Hash, Ord)]
+pub(crate) enum FormatState {
+    /// Sets attribute val="1"
+    Enabled,
+    /// Sets attribute val="0"
+    Disabled,
+    #[default]
+    /// Value will not show
+    None,
+}
+
 /// The `FontProperty` denotes all styling options
 /// that can be added to text
 #[derive(Debug, Default, Clone, PartialEq, Eq, PartialOrd, Hash, Ord)]
 pub(crate) struct FontProperty {
-    pub(crate) bold: bool,
-    pub(crate) underline: bool,
+    pub(crate) strikethrough: FormatState,
+    pub(crate) outline: FormatState,
+    pub(crate) shadow: FormatState,
+    pub(crate) subscript: FormatState,
+    pub(crate) baseline: FormatState,
+    pub(crate) superscript: FormatState,
+    pub(crate) bold: FormatState,
+    pub(crate) underline: FormatState,
     /// Double underline
-    pub(crate) double: bool,
-    pub(crate) italic: bool,
+    pub(crate) double: FormatState,
+    pub(crate) italic: FormatState,
     pub(crate) size: String,
     pub(crate) color: Color,
     /// Font type
@@ -121,20 +140,75 @@ impl<W: Write> XmlWriter<W> for FontProperty {
         writer
             .create_element(tag_name)
             .write_inner_content::<_, XcelmateError>(|writer| {
-                if self.bold {
-                    writer.create_element("b").write_empty()?;
-                }
-                if self.italic {
-                    writer.create_element("i").write_empty()?;
-                }
-                if self.double {
-                    writer
+                match self.strikethrough {
+                    FormatState::Enabled => writer.create_element("strike").write_empty()?,
+                    FormatState::Disabled => writer
+                        .create_element("strike")
+                        .with_attribute(("val", "0"))
+                        .write_empty()?,
+                    FormatState::None => writer,
+                };
+                match self.outline {
+                    FormatState::Enabled => writer.create_element("outline").write_empty()?,
+                    FormatState::Disabled => writer
+                        .create_element("outline")
+                        .with_attribute(("val", "0"))
+                        .write_empty()?,
+                    FormatState::None => writer,
+                };
+                match self.shadow {
+                    FormatState::Enabled => writer.create_element("shadow").write_empty()?,
+                    FormatState::Disabled => writer
+                        .create_element("shadow")
+                        .with_attribute(("val", "0"))
+                        .write_empty()?,
+                    FormatState::None => writer,
+                };
+                match (&self.superscript, &self.subscript, &self.baseline) {
+                    (FormatState::Enabled, _, _) => writer
+                        .create_element("vertAlign")
+                        .with_attribute(("val", "superscript"))
+                        .write_empty()?,
+                    (_, FormatState::Enabled, _) => writer
+                        .create_element("vertAlign")
+                        .with_attribute(("val", "subscript"))
+                        .write_empty()?,
+                    (_, _, FormatState::Enabled) => writer
+                        .create_element("vertAlign")
+                        .with_attribute(("val", "baseline"))
+                        .write_empty()?,
+                    _ => writer,
+                };
+                match self.bold {
+                    FormatState::Enabled => writer.create_element("b").write_empty()?,
+                    FormatState::Disabled => writer
+                        .create_element("b")
+                        .with_attribute(("val", "0"))
+                        .write_empty()?,
+                    FormatState::None => writer,
+                };
+                match self.italic {
+                    FormatState::Enabled => writer.create_element("i").write_empty()?,
+                    FormatState::Disabled => writer
+                        .create_element("i")
+                        .with_attribute(("val", "0"))
+                        .write_empty()?,
+                    FormatState::None => writer,
+                };
+                match (&self.underline, &self.double) {
+                    (FormatState::Enabled, _) => {
+                        writer.create_element("u").write_empty()?
+                    }
+                    (FormatState::Disabled, _) => writer
+                        .create_element("u")
+                        .with_attribute(("val", "none"))
+                        .write_empty()?,
+                    (_, FormatState::Enabled) => writer
                         .create_element("u")
                         .with_attribute(("val", "double"))
-                        .write_empty()?;
-                } else if self.underline {
-                    writer.create_element("u").write_empty()?;
-                }
+                        .write_empty()?,
+                    _ => writer,
+                };
                 if !self.size.is_empty() {
                     writer
                         .create_element("sz")
@@ -238,20 +312,22 @@ impl<W: Write> XmlWriter<W> for Fill {
         let writer = writer
             .create_element(tag_name)
             .write_inner_content::<_, XcelmateError>(|writer| {
-                match self.r#type {
-                    PatternFill::Solid => writer
-                        .create_element("patternFill")
-                        .with_attribute(("patternType", "solid"))
+                let writer_fill = writer.create_element("patternFill");
+                match (&self.r#type, &self.background, &self.foreground) {
+                    (PatternFill::None, Some(bg), Some(fg)) => writer_fill
                         .write_inner_content::<_, XcelmateError>(|writer| {
-                            if let Some(fg) = &self.foreground {
-                                fg.write_xml(writer, "fgColor")?;
-                            }
-                            if let Some(bg) = &self.background {
-                                bg.write_xml(writer, "bgColor")?;
-                            }
+                            fg.write_xml(writer, "fgColor")?;
+                            bg.write_xml(writer, "bgColor")?;
                             Ok(())
                         })?,
-                    _ => self.r#type.write_xml(writer, "patternFill")?,
+                    (PatternFill::Solid, Some(bg), Some(fg)) => writer_fill
+                        .with_attribute(("patternType", "solid"))
+                        .write_inner_content::<_, XcelmateError>(|writer| {
+                            fg.write_xml(writer, "fgColor")?;
+                            bg.write_xml(writer, "bgColor")?;
+                            Ok(())
+                        })?,
+                    _ => self.r#type.write_xml(writer, tag_name)?,
                 };
                 Ok(())
             });
@@ -357,6 +433,9 @@ impl<W: Write> XmlWriter<W> for Border {
                 self.right.write_xml(writer, "right")?;
                 self.top.write_xml(writer, "top")?;
                 self.bottom.write_xml(writer, "bottom")?;
+                self.vertical.write_xml(writer, "vertical")?;
+                self.horizontal.write_xml(writer, "horizontal")?;
+                self.diagonal.write_xml(writer, "diagonal")?;
                 Ok(())
             });
         Ok(writer?)
@@ -671,14 +750,14 @@ impl<W: Write> XmlWriter<W> for Stylesheet {
                             let _ = writer
                                 .create_element("dxf")
                                 .write_inner_content::<_, XcelmateError>(|writer| {
-                                    if let Some(border) = &diff_xf.border {
-                                        border.write_xml(writer, "border")?;
-                                    }
                                     if let Some(font) = &diff_xf.font {
                                         font.write_xml(writer, "font")?;
                                     }
                                     if let Some(fill) = &diff_xf.fill {
                                         fill.write_xml(writer, "fill")?;
+                                    }
+                                    if let Some(border) = &diff_xf.border {
+                                        border.write_xml(writer, "border")?;
                                     }
                                     Ok(())
                                 });
@@ -990,6 +1069,7 @@ impl Stylesheet {
                                     Stylesheet::read_border_region(&mut xml, QName(b"bottom"))?;
                                 border.vertical =
                                     Stylesheet::read_border_region(&mut xml, QName(b"vertical"))?;
+
                                 border.horizontal =
                                     Stylesheet::read_border_region(&mut xml, QName(b"horizontal"))?;
                                 border.diagonal =
@@ -1468,22 +1548,117 @@ impl Stylesheet {
                         }
                     }
                 }
-                Ok(Event::Empty(ref e)) if e.local_name().as_ref() == b"b" => font.bold = true,
-                Ok(Event::Empty(ref e)) if e.local_name().as_ref() == b"i" => font.italic = true,
+                Ok(Event::Empty(ref e)) if e.local_name().as_ref() == b"strike" => {
+                    font.strikethrough = FormatState::Enabled;
+                    for attr in e.attributes() {
+                        if let Ok(a) = attr {
+                            match a.key {
+                                QName(b"val") => match a.unescape_value()?.to_string().as_str() {
+                                    "0" => {
+                                        font.strikethrough = FormatState::Disabled;
+                                    }
+                                    _ => (),
+                                },
+                                _ => (),
+                            }
+                        }
+                    }
+                }
+                Ok(Event::Empty(ref e)) if e.local_name().as_ref() == b"outline" => {
+                    font.outline = FormatState::Enabled;
+                    for attr in e.attributes() {
+                        if let Ok(a) = attr {
+                            match a.key {
+                                QName(b"val") => match a.unescape_value()?.to_string().as_str() {
+                                    "0" => {
+                                        font.outline = FormatState::Disabled;
+                                    }
+                                    _ => (),
+                                },
+                                _ => (),
+                            }
+                        }
+                    }
+                }
+                Ok(Event::Empty(ref e)) if e.local_name().as_ref() == b"shadow" => {
+                    font.shadow = FormatState::Enabled;
+                    for attr in e.attributes() {
+                        if let Ok(a) = attr {
+                            match a.key {
+                                QName(b"val") => match a.unescape_value()?.to_string().as_str() {
+                                    "0" => {
+                                        font.shadow = FormatState::Disabled;
+                                    }
+                                    _ => (),
+                                },
+                                _ => (),
+                            }
+                        }
+                    }
+                }
+                Ok(Event::Empty(ref e)) if e.local_name().as_ref() == b"vertAlign" => {
+                    for attr in e.attributes() {
+                        if let Ok(a) = attr {
+                            match a.key {
+                                QName(b"val") => match a.unescape_value()?.to_string().as_str() {
+                                    "subscript" => {
+                                        font.subscript = FormatState::Enabled;
+                                    }
+                                    "superscript" => font.superscript = FormatState::Enabled,
+                                    "baseline" => font.baseline = FormatState::Enabled,
+                                    _ => (),
+                                },
+                                _ => (),
+                            }
+                        }
+                    }
+                }
+                Ok(Event::Empty(ref e)) if e.local_name().as_ref() == b"b" => {
+                    font.bold = FormatState::Enabled;
+                    for attr in e.attributes() {
+                        if let Ok(a) = attr {
+                            match a.key {
+                                QName(b"val") => match a.unescape_value()?.to_string().as_str() {
+                                    "0" => {
+                                        font.bold = FormatState::Disabled;
+                                    }
+                                    _ => (),
+                                },
+                                _ => (),
+                            }
+                        }
+                    }
+                }
+                Ok(Event::Empty(ref e)) if e.local_name().as_ref() == b"i" => {
+                    font.italic = FormatState::Enabled;
+                    for attr in e.attributes() {
+                        if let Ok(a) = attr {
+                            match a.key {
+                                QName(b"val") => match a.unescape_value()?.to_string().as_str() {
+                                    "0" => {
+                                        font.italic = FormatState::Disabled;
+                                    }
+                                    _ => (),
+                                },
+                                _ => (),
+                            }
+                        }
+                    }
+                }
                 Ok(Event::Empty(ref e)) if e.local_name().as_ref() == b"u" => {
                     // we do not know if underline is set to not show so we set it to true incase we encountee nonr in attributes
-                    font.underline = true;
+                    font.underline = FormatState::Enabled;
                     for attr in e.attributes() {
                         if let Ok(a) = attr {
                             match a.key {
                                 QName(b"val") => {
                                     match a.unescape_value()?.to_string().as_str() {
                                         "double" => {
-                                            font.double = true;
+                                            font.double = FormatState::Enabled;
                                             // No longer can be true if doubled
-                                            font.underline = false;
+                                            font.underline = FormatState::None;
                                         }
-                                        "none" => font.underline = false,
+                                        "none" => font.underline = FormatState::Disabled,
                                         _ => (),
                                     }
                                 }
@@ -1711,8 +1886,8 @@ mod stylesheet_unittests {
         use super::init;
         use crate::stream::utils::Save;
         use crate::stream::xlsx::stylesheet::{
-            Border, BorderRegion, BorderStyle, CellXf, DiffXf, Fill, FontProperty, NumberFormat,
-            PatternFill,
+            Border, BorderRegion, BorderStyle, CellXf, DiffXf, Fill, FontProperty, FormatState,
+            NumberFormat, PatternFill,
         };
         use crate::stream::xlsx::{
             stylesheet::{Color, Rgb},
@@ -1982,10 +2157,9 @@ mod stylesheet_unittests {
                         assert_eq!(
                             actual,
                             FontProperty {
-                                bold: true,
-                                underline: false,
-                                double: true,
-                                italic: true,
+                                bold: FormatState::Enabled,
+                                double: FormatState::Enabled,
+                                italic: FormatState::Enabled,
                                 size: "21".into(),
                                 color: Color::Theme { id: 1, tint: None },
                                 font: "Calibri".into(),
@@ -2030,10 +2204,8 @@ mod stylesheet_unittests {
                         assert_eq!(
                             actual,
                             FontProperty {
-                                bold: true,
-                                underline: false,
-                                double: false,
-                                italic: true,
+                                bold: FormatState::Enabled,
+                                italic: FormatState::Enabled,
                                 size: "21".into(),
                                 color: Color::Theme { id: 1, tint: None },
                                 font: "Calibri".into(),
@@ -2078,10 +2250,9 @@ mod stylesheet_unittests {
                         assert_eq!(
                             actual,
                             FontProperty {
-                                bold: true,
-                                underline: true,
-                                double: false,
-                                italic: true,
+                                bold: FormatState::Enabled,
+                                underline: FormatState::Enabled,
+                                italic: FormatState::Enabled,
                                 size: "21".into(),
                                 color: Color::Theme { id: 1, tint: None },
                                 font: "Calibri".into(),
