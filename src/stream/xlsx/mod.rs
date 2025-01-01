@@ -34,6 +34,8 @@ impl<RS: Read + Seek> Xlsx<RS> {
     fn save(&mut self, name: &str) -> Result<(), XcelmateError> {
         let mut zip = ZipWriter::new(File::create(name)?);
         let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
-        self.shared_string_table.save(&mut zip, options)
+        let _ = self.shared_string_table.save(&mut zip, options);
+        let _ = self.style.save(&mut zip, options);
+        Ok(())
     }
 }

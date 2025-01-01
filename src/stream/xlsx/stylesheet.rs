@@ -1,15 +1,23 @@
 use crate::{
     errors::XcelmateError,
-    stream::utils::{xml_reader, Key, XmlWriter},
+    stream::utils::{xml_reader, Key, Save, XmlWriter},
 };
-use bimap::BiMap;
-use quick_xml::{events::Event, name::QName, Reader, Writer};
+use bimap::{BiBTreeMap, BiHashMap, BiMap};
+use quick_xml::{
+    events::{BytesDecl, Event},
+    name::QName,
+    Reader, Writer,
+};
 use std::{
     collections::HashMap,
     io::{BufRead, Read, Seek, Write},
+    ops::RangeInclusive,
     sync::Arc,
 };
-use zip::ZipArchive;
+use zip::{
+    write::{FileOptionExtension, FileOptions},
+    ZipArchive,
+};
 
 /// The `Rgb` promotes better api usage with hexadecimal coloring
 #[derive(Debug, PartialEq, Clone, Eq, PartialOrd, Hash, Ord)]
@@ -36,9 +44,14 @@ impl ToString for Rgb {
 #[derive(Debug, PartialEq, Clone, Eq, PartialOrd, Hash, Ord)]
 pub(crate) enum Color {
     /// Builtin theme from excel color palette selector which includes theme id and tint value
-    Theme { id: u32, tint: Option<String> },
+    Theme {
+        id: u32,
+        tint: Option<String>,
+    },
     /// RGB color model
     Rgb(Rgb),
+    Index(u32),
+    Auto(u32),
 }
 impl Default for Color {
     fn default() -> Self {
@@ -46,7 +59,11 @@ impl Default for Color {
     }
 }
 impl<W: Write> XmlWriter<W> for Color {
-    fn write_xml<'a>(&self, writer: &'a mut Writer<W>, tag_name: &'a str) -> Result<&'a mut Writer<W>, XcelmateError> {
+    fn write_xml<'a>(
+        &self,
+        writer: &'a mut Writer<W>,
+        tag_name: &'a str,
+    ) -> Result<&'a mut Writer<W>, XcelmateError> {
         let writer = writer.create_element(tag_name);
         match self {
             Color::Theme { id, tint } => {
@@ -60,6 +77,14 @@ impl<W: Write> XmlWriter<W> for Color {
             }
             Color::Rgb(rgb) => {
                 let writer = writer.with_attribute(("rgb", rgb.to_string().as_str()));
+                Ok(writer.write_empty()?)
+            }
+            Color::Index(idx) => {
+                let writer = writer.with_attribute(("indexed", idx.to_string().as_str()));
+                Ok(writer.write_empty()?)
+            }
+            Color::Auto(val) => {
+                let writer = writer.with_attribute(("auto", val.to_string().as_str()));
                 Ok(writer.write_empty()?)
             }
         }
@@ -83,10 +108,16 @@ pub(crate) struct FontProperty {
     pub(crate) family: u32,
     /// Font scheme
     pub(crate) scheme: String,
+    /// Allow duplicate with counter since it will always hash different
+    pub(crate) dup_cnt: usize,
 }
 
 impl<W: Write> XmlWriter<W> for FontProperty {
-    fn write_xml<'a>(&self, writer: &'a mut Writer<W>, tag_name: &str) -> Result<&'a mut Writer<W>, XcelmateError> {
+    fn write_xml<'a>(
+        &self,
+        writer: &'a mut Writer<W>,
+        tag_name: &str,
+    ) -> Result<&'a mut Writer<W>, XcelmateError> {
         writer
             .create_element(tag_name)
             .write_inner_content::<_, XcelmateError>(|writer| {
@@ -104,23 +135,31 @@ impl<W: Write> XmlWriter<W> for FontProperty {
                 } else if self.underline {
                     writer.create_element("u").write_empty()?;
                 }
-                writer
-                    .create_element("sz")
-                    .with_attribute(("val", self.size.as_str()))
-                    .write_empty()?;
+                if !self.size.is_empty() {
+                    writer
+                        .create_element("sz")
+                        .with_attribute(("val", self.size.as_str()))
+                        .write_empty()?;
+                }
                 self.color.write_xml(writer, "color")?;
-                writer
-                    .create_element(if tag_name == "font" {"name"} else {"rFont"})//the similarity of rich text and font tags are identical except for this
-                    .with_attribute(("val", self.font.as_str()))
-                    .write_empty()?;
-                writer
-                    .create_element("family")
-                    .with_attribute(("val", self.family.to_string().as_str()))
-                    .write_empty()?;
-                writer
-                    .create_element("scheme")
-                    .with_attribute(("val", self.scheme.as_str()))
-                    .write_empty()?;
+                if !self.font.is_empty() {
+                    writer
+                        .create_element(if tag_name == "font" { "name" } else { "rFont" }) //the similarity of rich text and font tags are identical except for this
+                        .with_attribute(("val", self.font.as_str()))
+                        .write_empty()?;
+                }
+                if self.family != u32::default() {
+                    writer
+                        .create_element("family")
+                        .with_attribute(("val", self.family.to_string().as_str()))
+                        .write_empty()?;
+                }
+                if !self.scheme.is_empty() {
+                    writer
+                        .create_element("scheme")
+                        .with_attribute(("val", self.scheme.as_str()))
+                        .write_empty()?;
+                }
                 Ok(())
             })?;
 
@@ -128,35 +167,31 @@ impl<W: Write> XmlWriter<W> for FontProperty {
     }
 }
 
+/// The range for number formats that are based on local currency
+const LOCALIZED_RANGE_NUMBER_FORMAT: RangeInclusive<usize> = 41..=44;
+/// The highest reserved id for number formats before custom number formats are detected
+const MAX_RESERVED_NUMBER_FORMAT: usize = 163;
 /// The formatting style to use on numbers
 #[derive(Debug, PartialEq, Default, Clone, Eq, PartialOrd, Hash, Ord)]
 pub(crate) struct NumberFormat {
     id: u32,
-    format_code: FormatType,
+    format_code: String,
 }
 impl<W: Write> XmlWriter<W> for NumberFormat {
-    fn write_xml<'a>(&self, writer: &'a mut Writer<W>, tag_name: &str) -> Result<&'a mut Writer<W>, XcelmateError> {
-        if let FormatType::Custom(code) = &self.format_code {
-            writer
-                .create_element(tag_name)
-                .with_attributes(vec![
-                    ("numFmtId", self.id.to_string().as_str()),
-                    ("formatCode", code.as_str()),
-                ])
-                .write_empty()?;
-        }
-
+    fn write_xml<'a>(
+        &self,
+        writer: &'a mut Writer<W>,
+        tag_name: &str,
+    ) -> Result<&'a mut Writer<W>, XcelmateError> {
+        writer
+            .create_element(tag_name)
+            .with_attributes(vec![
+                ("numFmtId", self.id.to_string().as_str()),
+                ("formatCode", self.format_code.as_str()),
+            ])
+            .write_empty()?;
         Ok(writer)
     }
-}
-
-/// The enum helps determine what to include in final write to file for number formats
-#[derive(Debug, PartialEq, Default, Clone, Eq, PartialOrd, Hash, Ord)]
-enum FormatType {
-    /// A builtin in number format code that will not appear in <numfmt> tag list
-    #[default]
-    Builtin,
-    Custom(String),
 }
 
 /// The pattern fill styling to apply to a cell
@@ -168,10 +203,20 @@ enum PatternFill {
     Gray,
 }
 impl<W: Write> XmlWriter<W> for PatternFill {
-    fn write_xml<'a>(&self, writer: &'a mut Writer<W>, tag_name: &'a str) -> Result<&'a mut Writer<W>, XcelmateError> {
+    fn write_xml<'a>(
+        &self,
+        writer: &'a mut Writer<W>,
+        tag_name: &'a str,
+    ) -> Result<&'a mut Writer<W>, XcelmateError> {
         match self {
-            PatternFill::None => Ok(writer.create_element(tag_name).with_attribute(("patternType", "none")).write_empty()?),
-            PatternFill::Gray => Ok(writer.create_element(tag_name).with_attribute(("patternType", "gray125")).write_empty()?),
+            PatternFill::None => Ok(writer
+                .create_element(tag_name)
+                .with_attribute(("patternType", "none"))
+                .write_empty()?),
+            PatternFill::Gray => Ok(writer
+                .create_element(tag_name)
+                .with_attribute(("patternType", "gray125"))
+                .write_empty()?),
             _ => Ok(writer),
         }
     }
@@ -185,7 +230,11 @@ pub(crate) struct Fill {
     background: Option<Color>,
 }
 impl<W: Write> XmlWriter<W> for Fill {
-    fn write_xml<'a>(&self, writer: &'a mut Writer<W>, tag_name: &'a str) -> Result<&'a mut Writer<W>, XcelmateError> {
+    fn write_xml<'a>(
+        &self,
+        writer: &'a mut Writer<W>,
+        tag_name: &'a str,
+    ) -> Result<&'a mut Writer<W>, XcelmateError> {
         let writer = writer
             .create_element(tag_name)
             .write_inner_content::<_, XcelmateError>(|writer| {
@@ -240,14 +289,50 @@ enum BorderStyle {
     /// Medium dash-dot-dot border
     MediumDashDotDot,
 }
-
+impl ToString for BorderStyle {
+    fn to_string(&self) -> String {
+        match self {
+            BorderStyle::Thin => "thin".into(),
+            BorderStyle::Medium => "medium".into(),
+            BorderStyle::Thick => "thick".into(),
+            BorderStyle::Double => "double".into(),
+            BorderStyle::Dashed => "dashed".into(),
+            BorderStyle::Dotted => "dotted".into(),
+            BorderStyle::DashDot => "dashDot".into(),
+            BorderStyle::DashDotDot => "dashDotDot".into(),
+            BorderStyle::SlantDashDot => "slantDashDot".into(),
+            BorderStyle::Hair => "hair".into(),
+            BorderStyle::MediumDashed => "mediumDashed".into(),
+            BorderStyle::MediumDashDot => "mediumDashDot".into(),
+            BorderStyle::MediumDashDotDot => "mediumDashDotDot".into(),
+        }
+    }
+}
 /// The border region to apply styling to
 #[derive(Debug, PartialEq, Default, Clone, Eq, PartialOrd, Hash, Ord)]
 struct BorderRegion {
     style: Option<BorderStyle>,
     color: Option<Color>,
 }
-
+impl<W: Write> XmlWriter<W> for BorderRegion {
+    fn write_xml<'a>(
+        &self,
+        writer: &'a mut Writer<W>,
+        tag_name: &'a str,
+    ) -> Result<&'a mut Writer<W>, XcelmateError> {
+        if let (Some(style), Some(color)) = (&self.style, &self.color) {
+            let writer = writer
+                .create_element(tag_name)
+                .with_attribute(("style", style.to_string().as_str()))
+                .write_inner_content::<_, XcelmateError>(|writer| {
+                    color.write_xml(writer, "color")?;
+                    Ok(())
+                });
+            return Ok(writer?);
+        }
+        Ok(writer)
+    }
+}
 /// The styling for all border regions of a cell
 #[derive(Debug, PartialEq, Default, Clone, Eq, PartialOrd, Hash, Ord)]
 pub(crate) struct Border {
@@ -255,6 +340,71 @@ pub(crate) struct Border {
     right: BorderRegion,
     top: BorderRegion,
     bottom: BorderRegion,
+    diagonal: BorderRegion,
+    vertical: BorderRegion,
+    horizontal: BorderRegion,
+}
+impl<W: Write> XmlWriter<W> for Border {
+    fn write_xml<'a>(
+        &self,
+        writer: &'a mut Writer<W>,
+        tag_name: &'a str,
+    ) -> Result<&'a mut Writer<W>, XcelmateError> {
+        let writer = writer
+            .create_element(tag_name)
+            .write_inner_content::<_, XcelmateError>(|writer| {
+                self.left.write_xml(writer, "left")?;
+                self.right.write_xml(writer, "right")?;
+                self.top.write_xml(writer, "top")?;
+                self.bottom.write_xml(writer, "bottom")?;
+                Ok(())
+            });
+        Ok(writer?)
+    }
+}
+/// The horizontal alignment of a cell
+#[derive(Debug, PartialEq, Default, Clone, Eq, PartialOrd, Hash, Ord)]
+pub(crate) enum HorizontalAlignment {
+    #[default]
+    Left,
+    Center,
+    Right,
+}
+impl ToString for HorizontalAlignment {
+    fn to_string(&self) -> String {
+        match self {
+            HorizontalAlignment::Left => "left".into(),
+            HorizontalAlignment::Center => "center".into(),
+            HorizontalAlignment::Right => "right".into(),
+        }
+    }
+}
+
+/// The vertical alignment of a cell
+#[derive(Debug, Default, PartialEq, Clone, Eq, PartialOrd, Hash, Ord)]
+pub(crate) enum VerticalAlignment {
+    Top,
+    Center,
+    #[default]
+    Bottom,
+}
+impl ToString for VerticalAlignment {
+    fn to_string(&self) -> String {
+        match self {
+            VerticalAlignment::Top => "top".into(),
+            VerticalAlignment::Center => "center".into(),
+            VerticalAlignment::Bottom => "bottom".into(),
+        }
+    }
+}
+
+/// The alignment attributes of a cell
+#[derive(Debug, PartialEq, Default, Clone, Eq, PartialOrd, Hash, Ord)]
+pub(crate) struct Alignment {
+    wrap: bool,
+    valign: VerticalAlignment,
+    indent: bool,
+    halign: HorizontalAlignment,
 }
 
 /// The styling traits of a cell
@@ -264,6 +414,8 @@ pub(crate) struct CellXf {
     font: Arc<FontProperty>,
     fill: Arc<Fill>,
     border: Arc<Border>,
+    quote_prefix: bool,
+    align: Option<Alignment>,
 }
 
 /// The styling groups for differential conditional formatting
@@ -272,6 +424,29 @@ pub(crate) struct DiffXf {
     font: Option<FontProperty>,
     fill: Option<Fill>,
     border: Option<Border>,
+}
+impl<W: Write> XmlWriter<W> for DiffXf {
+    fn write_xml<'a>(
+        &self,
+        writer: &'a mut Writer<W>,
+        tag_name: &'a str,
+    ) -> Result<&'a mut Writer<W>, XcelmateError> {
+        let writer = writer
+            .create_element(tag_name)
+            .write_inner_content::<_, XcelmateError>(|writer| {
+                if let Some(font) = &self.font {
+                    font.write_xml(writer, "font")?;
+                }
+                if let Some(fill) = &self.fill {
+                    fill.write_xml(writer, "fill")?;
+                }
+                if let Some(border) = &self.border {
+                    border.write_xml(writer, "border")?;
+                }
+                Ok(())
+            });
+        Ok(writer?)
+    }
 }
 
 /// The grouping of custom table styles
@@ -290,6 +465,16 @@ enum TableStyleElement {
     FirstRow(Arc<DiffXf>),
     SecondRow(Arc<DiffXf>),
 }
+impl ToString for TableStyleElement {
+    fn to_string(&self) -> String {
+        match self {
+            TableStyleElement::Table(_) => "wholeTable".into(),
+            TableStyleElement::Header(_) => "headerRow".into(),
+            TableStyleElement::FirstRow(_) => "firstRowStripe".into(),
+            TableStyleElement::SecondRow(_) => "secondRowStripe".into(),
+        }
+    }
+}
 
 /// A custom table style
 #[derive(Debug, PartialEq, Default, Clone, Eq, PartialOrd, Hash, Ord)]
@@ -303,16 +488,273 @@ pub(crate) struct TableCustomStyle {
 /// The `Stylesheet` provides a mapping of styles properties such as fonts, colors, themes, etc
 #[derive(Default)]
 pub(crate) struct Stylesheet {
+    number_formats_builtin: Option<BiMap<Arc<NumberFormat>, Key>>,
     number_formats: Option<BiMap<Arc<NumberFormat>, Key>>,
-    fonts: BiMap<Arc<FontProperty>, Key>,
-    fills: BiMap<Arc<Fill>, Key>,
-    borders: BiMap<Arc<Border>, Key>,
-    cell_xf: BiMap<Arc<CellXf>, Key>,
+    fonts: BiBTreeMap<Arc<FontProperty>, Key>,
+    fills: BiBTreeMap<Arc<Fill>, Key>,
+    borders: BiBTreeMap<Arc<Border>, Key>,
+    cell_xf: BiBTreeMap<Arc<CellXf>, Key>,
     diff_xf: HashMap<Arc<DiffXf>, Key>,
     diff_xf_with_dups: Vec<Arc<DiffXf>>, // Duplicates can exist
     table_style: Option<TableStyle>,
 }
+impl<W: Write> XmlWriter<W> for Stylesheet {
+    fn write_xml<'a>(
+        &self,
+        writer: &'a mut Writer<W>,
+        tag_name: &str,
+    ) -> Result<&'a mut Writer<W>, XcelmateError> {
+        writer.write_event(Event::Decl(BytesDecl::new(
+            "1.0",
+            Some("UTF-8"),
+            Some("yes"),
+        )))?;
+        writer
+            .create_element(tag_name)
+            .with_attributes(vec![
+                (
+                    "xmlns",
+                    "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
+                ),
+                (
+                    "xmlns:mc",
+                    "http://schemas.openxmlformats.org/markup-compatibility/2006",
+                ),
+                ("mc:Ignorable", "x14ac x16r2 xr xr9"),
+                (
+                    "xmlns:x14ac",
+                    "http://schemas.microsoft.com/office/spreadsheetml/2009/9/ac",
+                ),
+                (
+                    "xmlns:x16r2",
+                    "http://schemas.microsoft.com/office/spreadsheetml/2015/02/main",
+                ),
+                (
+                    "xmlns:xr",
+                    "http://schemas.microsoft.com/office/spreadsheetml/2014/revision",
+                ),
+                (
+                    "xmlns:xr9",
+                    "http://schemas.microsoft.com/office/spreadsheetml/2016/revision9",
+                ),
+            ])
+            .write_inner_content::<_, XcelmateError>(|writer| {
+                // <numFmts>
+                if let Some(numfmt) = &self.number_formats {
+                    // Includes builtin in total count (should remove this)
+                    let _ = writer
+                        .create_element("numFmts")
+                        .with_attribute(("count", numfmt.len().to_string().as_str()))
+                        .write_inner_content::<_, XcelmateError>(|writer| {
+                            for n in numfmt.left_values() {
+                                n.write_xml(writer, "numFmt")?;
+                            }
+                            Ok(())
+                        });
+                }
+                // <fonts>
+                let _ = writer
+                    .create_element("fonts")
+                    .with_attribute(("count", self.fonts.len().to_string().as_str()))
+                    .write_inner_content::<_, XcelmateError>(|writer| {
+                        for (font, _) in self.fonts.right_range(0..self.fonts.len()) {
+                            font.write_xml(writer, "font")?;
+                        }
+                        Ok(())
+                    });
+                // <fills>
+                let _ = writer
+                    .create_element("fills")
+                    .with_attribute(("count", self.fills.len().to_string().as_str()))
+                    .write_inner_content::<_, XcelmateError>(|writer| {
+                        for (fill, _) in self.fills.right_range(0..self.fonts.len()) {
+                            fill.write_xml(writer, "fill")?;
+                        }
+                        Ok(())
+                    });
+                // <borders>
+                let _ = writer
+                    .create_element("borders")
+                    .with_attribute(("count", self.borders.len().to_string().as_str()))
+                    .write_inner_content::<_, XcelmateError>(|writer| {
+                        for (border, _) in self.borders.right_range(0..self.borders.len()) {
+                            border.write_xml(writer, "border")?;
+                        }
+                        Ok(())
+                    });
+                // <cellXfs>
+                let _ = writer
+                    .create_element("cellXfs")
+                    .with_attribute(("count", self.cell_xf.len().to_string().as_str()))
+                    .write_inner_content::<_, XcelmateError>(|writer| {
+                        for (xf, _) in self.cell_xf.right_range(0..self.cell_xf.len()) {
+                            let writer = writer.create_element("xf");
 
+                            let numfmt_id = if let Some(numfmt) = &xf.number_format {
+                                self.get_key_from_number_format_ref(numfmt.clone()).unwrap()
+                            } else {
+                                0
+                            };
+                            let writer = writer.with_attributes(vec![
+                                ("numFmtId", numfmt_id.to_string().as_str()),
+                                (
+                                    "fontId",
+                                    self.get_key_from_font_ref(xf.font.clone())
+                                        .unwrap()
+                                        .to_string()
+                                        .as_str(),
+                                ),
+                                (
+                                    "fillId",
+                                    self.get_key_from_fill_ref(xf.fill.clone())
+                                        .unwrap()
+                                        .to_string()
+                                        .as_str(),
+                                ),
+                                (
+                                    "borderId",
+                                    self.get_key_from_border_ref(xf.border.clone())
+                                        .unwrap()
+                                        .to_string()
+                                        .as_str(),
+                                ),
+                            ]);
+                            let writer = if xf.quote_prefix {
+                                writer.with_attribute(("quotePrefix", "1"))
+                            } else {
+                                writer
+                            };
+
+                            if let Some(align) = &xf.align {
+                                writer.write_inner_content::<_, XcelmateError>(|writer| {
+                                    let mut attrs = vec![];
+                                    if align.wrap {
+                                        attrs.push(("wrapText", "1"))
+                                    }
+                                    if align.indent {
+                                        attrs.push(("indent", "1"))
+                                    }
+                                    match align.valign {
+                                        VerticalAlignment::Top => attrs.push(("vertical", "top")),
+                                        VerticalAlignment::Center => {
+                                            attrs.push(("vertical", "center"))
+                                        }
+                                        VerticalAlignment::Bottom => (),
+                                    }
+                                    match align.halign {
+                                        HorizontalAlignment::Left => (),
+                                        HorizontalAlignment::Center => {
+                                            attrs.push(("horizontal", "center"))
+                                        }
+                                        HorizontalAlignment::Right => {
+                                            attrs.push(("horizontal", "right"))
+                                        }
+                                    }
+                                    writer
+                                        .create_element("alignment")
+                                        .with_attributes(attrs)
+                                        .write_empty()?;
+                                    Ok(())
+                                })?;
+                            } else {
+                                writer.write_empty()?;
+                            };
+                        }
+                        Ok(())
+                    });
+                // <dxfs>
+                let _ = writer
+                    .create_element("dxfs")
+                    .with_attribute(("count", self.diff_xf_with_dups.len().to_string().as_str()))
+                    .write_inner_content::<_, XcelmateError>(|writer| {
+                        for diff_xf in &self.diff_xf_with_dups {
+                            let _ = writer
+                                .create_element("dxf")
+                                .write_inner_content::<_, XcelmateError>(|writer| {
+                                    if let Some(border) = &diff_xf.border {
+                                        border.write_xml(writer, "border")?;
+                                    }
+                                    if let Some(font) = &diff_xf.font {
+                                        font.write_xml(writer, "font")?;
+                                    }
+                                    if let Some(fill) = &diff_xf.fill {
+                                        fill.write_xml(writer, "fill")?;
+                                    }
+                                    Ok(())
+                                });
+                        }
+                        Ok(())
+                    });
+                // <tableStyles>
+                if let Some(table_style) = &self.table_style {
+                    let table_style_writer =
+                        writer.create_element("tableStyles").with_attributes(vec![
+                            ("count", table_style.styles.len().to_string().as_str()),
+                            (
+                                "defaultPivotStyle",
+                                table_style.default_pivot_style.as_str(),
+                            ),
+                            ("defaultTableStyle", table_style.default_style.as_str()),
+                        ]);
+                    if !table_style.styles.is_empty() {
+                        // <tableStyle>
+                        let _ =
+                            table_style_writer.write_inner_content::<_, XcelmateError>(|writer| {
+                                for (_, style) in &table_style.styles {
+                                    let _ = writer
+                                        .create_element("tableStyle")
+                                        .with_attributes(vec![
+                                            ("pivot", style.pivot.to_string().as_str()),
+                                            ("count", style.elements.len().to_string().as_str()),
+                                            ("xr9:uid", style.uid.as_str()),
+                                            ("name", style.name.as_str()),
+                                        ])
+                                        // <tableStyleElement>
+                                        .write_inner_content::<_, XcelmateError>(|writer| {
+                                            for ele in &style.elements {
+                                                let dxf = match ele {
+                                                    TableStyleElement::Table(dxf)
+                                                    | TableStyleElement::Header(dxf)
+                                                    | TableStyleElement::FirstRow(dxf)
+                                                    | TableStyleElement::SecondRow(dxf) => dxf,
+                                                };
+                                                let dxf_id = self
+                                                    .get_key_from_differential_ref(dxf.clone())
+                                                    .unwrap()
+                                                    .to_string();
+                                                writer
+                                                    .create_element("tableStyleElement")
+                                                    .with_attributes(vec![
+                                                        ("type", ele.to_string().as_str()),
+                                                        ("dxfId", dxf_id.as_str()),
+                                                    ])
+                                                    .write_empty()?;
+                                            }
+                                            Ok(())
+                                        });
+                                }
+                                Ok(())
+                            });
+                    } else {
+                        table_style_writer.write_empty()?;
+                    }
+                }
+                Ok(())
+            })?;
+        Ok(writer)
+    }
+}
+impl<W: Write + Seek, EX: FileOptionExtension> Save<W, EX> for Stylesheet {
+    fn save(
+        &mut self,
+        writer: &mut zip::ZipWriter<W>,
+        options: FileOptions<EX>,
+    ) -> Result<(), XcelmateError> {
+        writer.start_file("xl/styles.xml", options)?;
+        self.write_xml(&mut Writer::new(writer), "styleSheet")?;
+        Ok(())
+    }
+}
 impl Stylesheet {
     pub(crate) fn read_stylesheet<'a, RS: Read + Seek>(
         &mut self,
@@ -323,67 +765,47 @@ impl Stylesheet {
             Some(x) => x?,
         };
         let mut buf = Vec::with_capacity(1024);
-        let mut skipped_first_font = false;
         loop {
             buf.clear();
             match xml.read_event_into(&mut buf) {
                 Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"numFmts" => {
                     self.number_formats = Some(BiMap::new());
-                    // Preinsert builtin number formats to prevent failed lookup
-                    self.number_formats.as_mut().unwrap().insert(
-                        NumberFormat {
-                            id: 9,
-                            format_code: FormatType::Builtin,
-                        }
-                        .into(),
-                        9,
-                    );
                 }
                 ////////////////////
                 // NUMBER FORMATS
                 /////////////
                 Ok(Event::Empty(ref e)) if e.local_name().as_ref() == b"numFmt" => {
-                    if let Some(n) = self.number_formats.as_mut() {
-                        ////////////////////
-                        // NUMBER FORMATS Attrs
-                        /////////////
-                        let mut numfmt = NumberFormat::default();
-                        for attr in e.attributes() {
-                            if let Ok(a) = attr {
-                                match a.key {
-                                    QName(b"numFmtId") => {
-                                        numfmt.id = a.unescape_value()?.parse::<u32>()?
-                                    }
-                                    QName(b"formatCode") => {
-                                        numfmt.format_code =
-                                            FormatType::Custom(a.unescape_value()?.to_string())
-                                    }
-                                    _ => (),
+                    ////////////////////
+                    // NUMBER FORMATS Attrs
+                    /////////////
+                    let mut numfmt = NumberFormat::default();
+                    for attr in e.attributes() {
+                        if let Ok(a) = attr {
+                            match a.key {
+                                QName(b"numFmtId") => {
+                                    numfmt.id = a.unescape_value()?.parse::<u32>()?
                                 }
+                                QName(b"formatCode") => {
+                                    numfmt.format_code = a.unescape_value()?.to_string()
+                                }
+                                _ => (),
                             }
                         }
-                        let key = numfmt.id as usize;
-                        let numfmt = Arc::new(numfmt);
-                        n.insert(numfmt, key);
                     }
-                }
-                Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"fonts" => {
-                    // Preset the first default font to be unique to avoid duplicate overwritting since first font is always there
-                    let font = Arc::new(FontProperty::default());
-                    self.fonts.insert(font, 0);
+                    self.add_number_format_ref_to_table(Arc::new(numfmt));
                 }
                 ////////////////////
                 // FONT
                 /////////////
                 Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"font" => {
-                    let font = Stylesheet::read_font(&mut xml, e.name())?;
-                    // Skip the first default font since we dont care about it and keep correct index mapping
-                    if skipped_first_font {
-                        let key = self.fonts.len();
-                        let font = Arc::new(font);
-                        self.fonts.insert(font, key);
+                    // Allow duplicates by increment dup count so all duplicate reflect their respective duplicate count
+                    let mut font = Stylesheet::read_font(&mut xml, e.name())?;
+                    if let Some(id) = self.get_key_from_font_ref(font.clone().into()) {
+                        let dup_cnt = self.get_font_ref_from_key(id).unwrap().dup_cnt + 1;
+                        font.dup_cnt = dup_cnt;
+                        let _ = self.add_font_ref_to_table(font.into());
                     } else {
-                        skipped_first_font = true
+                        let _ = self.add_font_ref_to_table(font.into());
                     }
                 }
                 ////////////////////
@@ -404,7 +826,7 @@ impl Stylesheet {
                     border.right = Stylesheet::read_border_region(&mut xml, QName(b"right"))?;
                     border.top = Stylesheet::read_border_region(&mut xml, QName(b"top"))?;
                     border.bottom = Stylesheet::read_border_region(&mut xml, QName(b"bottom"))?;
-
+                    border.diagonal = Stylesheet::read_border_region(&mut xml, QName(b"diagonal"))?;
                     let key = self.borders.len();
                     let border = Arc::new(border);
                     self.borders.insert(border, key);
@@ -417,11 +839,14 @@ impl Stylesheet {
                     loop {
                         cell_xf_buf.clear();
                         let mut cell_xf = CellXf::default();
-                        match xml.read_event_into(&mut cell_xf_buf) {
+                        let event = xml.read_event_into(&mut cell_xf_buf);
+                        match event {
                             ////////////////////
                             // CELL REFERENCES nth-1
                             /////////////
-                            Ok(Event::Empty(ref e)) if e.local_name().as_ref() == b"xf" => {
+                            Ok(Event::Start(ref e)) | Ok(Event::Empty(ref e))
+                                if e.local_name().as_ref() == b"xf" =>
+                            {
                                 for attr in e.attributes() {
                                     if let Ok(a) = attr {
                                         match a.key {
@@ -442,13 +867,94 @@ impl Stylesheet {
                                                 let key = a.unescape_value()?.parse::<usize>()?;
                                                 cell_xf.border = self.get_border_ref_from_key(key).expect("all border styles should have been captured previously");
                                             }
+                                            QName(b"quotePrefix") => {
+                                                let val = a.unescape_value()?.parse::<usize>()?;
+                                                if val == 1 {
+                                                    cell_xf.quote_prefix = true;
+                                                }
+                                            }
                                             _ => (),
                                         }
                                     }
                                 }
-                                let key = self.cell_xf.len();
-                                let cell_xf = Arc::new(cell_xf);
-                                self.cell_xf.insert(cell_xf, key);
+                                ////////////////////
+                                // CELL REFERENCES nth-2
+                                /////////////
+                                if let Ok(Event::Start(_)) = event {
+                                    let mut val_buf = Vec::with_capacity(1024);
+                                    loop {
+                                        val_buf.clear();
+                                        let event = xml.read_event_into(&mut val_buf);
+                                        match event {
+                                            Ok(Event::Empty(ref e))
+                                                if e.local_name().as_ref() == b"alignment" =>
+                                            {
+                                                let mut align = Alignment::default();
+                                                for attr in e.attributes() {
+                                                    if let Ok(a) = attr {
+                                                        match a.key {
+                                                            QName(b"vertical") => {
+                                                                let val =
+                                                                    a.unescape_value()?.to_string();
+                                                                match val.as_str() {
+                                                                    "center" => align.valign =
+                                                                        VerticalAlignment::Center,
+                                                                    "top" => {
+                                                                        align.valign =
+                                                                            VerticalAlignment::Top
+                                                                    }
+                                                                    _ => (),
+                                                                };
+                                                            }
+                                                            QName(b"wrapText") => {
+                                                                let val = a
+                                                                    .unescape_value()?
+                                                                    .parse::<usize>()?;
+                                                                if val == 1 {
+                                                                    align.wrap = true;
+                                                                }
+                                                            }
+                                                            QName(b"horizontal") => {
+                                                                let val =
+                                                                    a.unescape_value()?.to_string();
+                                                                match val.as_str() {
+                                                                    "center" => align.halign =
+                                                                        HorizontalAlignment::Center,
+                                                                    "right" => align.halign =
+                                                                        HorizontalAlignment::Right,
+                                                                    _ => (),
+                                                                };
+                                                            }
+                                                            QName(b"indent") => {
+                                                                let val = a
+                                                                    .unescape_value()?
+                                                                    .parse::<usize>()?;
+                                                                if val == 1 {
+                                                                    align.indent = true;
+                                                                }
+                                                            }
+                                                            _ => (),
+                                                        }
+                                                    }
+                                                }
+                                                cell_xf.align = Some(align);
+                                            }
+                                            Ok(Event::End(ref e))
+                                                if e.local_name().as_ref() == b"xf" =>
+                                            {
+                                                break
+                                            }
+                                            Ok(Event::Eof) => {
+                                                return Err(XcelmateError::XmlEof(
+                                                    "alignment".into(),
+                                                ))
+                                            }
+                                            Err(e) => return Err(XcelmateError::Xml(e)),
+                                            _ => (),
+                                        }
+                                    }
+                                }
+                                self.add_cell_ref_to_table(Arc::new(cell_xf));
                             }
                             Ok(Event::End(ref e)) if e.local_name().as_ref() == b"cellXfs" => break,
                             Ok(Event::Eof) => return Err(XcelmateError::XmlEof("cellXfs".into())),
@@ -482,6 +988,12 @@ impl Stylesheet {
                                     Stylesheet::read_border_region(&mut xml, QName(b"top"))?;
                                 border.bottom =
                                     Stylesheet::read_border_region(&mut xml, QName(b"bottom"))?;
+                                border.vertical =
+                                    Stylesheet::read_border_region(&mut xml, QName(b"vertical"))?;
+                                border.horizontal =
+                                    Stylesheet::read_border_region(&mut xml, QName(b"horizontal"))?;
+                                border.diagonal =
+                                    Stylesheet::read_border_region(&mut xml, QName(b"diagonal"))?;
                                 diff_xf.border = Some(border);
                             }
                             Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"fill" => {
@@ -633,8 +1145,7 @@ impl Stylesheet {
         Ok(())
     }
 
-    /// Get custom table style
-    pub(crate) fn get_custom_table_style(&mut self, name: &str) -> Option<Arc<TableCustomStyle>> {
+    pub(crate) fn get_custom_table_style(&self, name: &str) -> Option<Arc<TableCustomStyle>> {
         if let Some(t) = &self.table_style {
             t.styles.get(name).cloned()
         } else {
@@ -642,8 +1153,19 @@ impl Stylesheet {
         }
     }
 
-    /// Get the cell format ref from key
-    pub(crate) fn get_cell_ref_from_key(&mut self, key: Key) -> Option<Arc<CellXf>> {
+    pub(crate) fn add_custom_table_style(&self, name: &str) -> Option<Arc<TableCustomStyle>> {
+        todo!()
+    }
+
+    pub(crate) fn get_key_from_cell_ref(&self, key: Arc<CellXf>) -> Option<usize> {
+        if let Some(i) = self.cell_xf.get_by_left(&key) {
+            Some(*i)
+        } else {
+            None
+        }
+    }
+
+    pub(crate) fn get_cell_ref_from_key(&self, key: Key) -> Option<Arc<CellXf>> {
         if let Some(i) = self.cell_xf.get_by_right(&key) {
             Some(i.clone())
         } else {
@@ -651,8 +1173,20 @@ impl Stylesheet {
         }
     }
 
-    /// Get the differential format ref from key
-    pub(crate) fn get_differential_ref_from_key(&mut self, key: Key) -> Option<Arc<DiffXf>> {
+    pub(crate) fn add_cell_ref_to_table(&mut self, item: Arc<CellXf>) -> Arc<CellXf> {
+        self.cell_xf.insert(item.clone(), self.cell_xf.len());
+        item
+    }
+
+    pub(crate) fn get_key_from_differential_ref(&self, key: Arc<DiffXf>) -> Option<usize> {
+        if let Some(i) = self.diff_xf.get(&key) {
+            Some(*i)
+        } else {
+            None
+        }
+    }
+
+    pub(crate) fn get_differential_ref_from_key(&self, key: Key) -> Option<Arc<DiffXf>> {
         if let Some(i) = self.diff_xf_with_dups.get(key) {
             Some(i.clone())
         } else {
@@ -660,11 +1194,17 @@ impl Stylesheet {
         }
     }
 
-    /// Get the number format ref from key
-    pub(crate) fn get_number_format_ref_from_key(&mut self, key: Key) -> Option<Arc<NumberFormat>> {
+    pub(crate) fn add_differential_ref_to_table(&mut self, item: Arc<DiffXf>) -> Arc<DiffXf> {
+        self.diff_xf_with_dups.push(item.clone());
+        self.diff_xf
+            .insert(item.clone(), self.diff_xf_with_dups.len());
+        item
+    }
+
+    pub(crate) fn get_key_from_number_format_ref(&self, key: Arc<NumberFormat>) -> Option<usize> {
         if let Some(n) = &self.number_formats {
-            if let Some(i) = n.get_by_right(&key) {
-                Some(i.clone())
+            if let Some(i) = n.get_by_left(&key) {
+                Some(*i)
             } else {
                 None
             }
@@ -673,8 +1213,63 @@ impl Stylesheet {
         }
     }
 
-    /// Get the font format ref from key
-    pub(crate) fn get_font_ref_from_key(&mut self, key: Key) -> Option<Arc<FontProperty>> {
+    pub(crate) fn get_number_format_ref_from_key(&self, key: Key) -> Option<Arc<NumberFormat>> {
+        if (LOCALIZED_RANGE_NUMBER_FORMAT).contains(&key) || key > MAX_RESERVED_NUMBER_FORMAT {
+            if let Some(n) = &self.number_formats {
+                if let Some(i) = n.get_by_right(&key) {
+                    Some(i.clone())
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            if let Some(n) = &self.number_formats_builtin {
+                if let Some(i) = n.get_by_right(&key) {
+                    Some(i.clone())
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        }
+    }
+
+    pub(crate) fn add_number_format_ref_to_table(
+        &mut self,
+        item: Arc<NumberFormat>,
+    ) -> Arc<NumberFormat> {
+        let key = item.id as usize;
+        if (LOCALIZED_RANGE_NUMBER_FORMAT).contains(&key) || key >= MAX_RESERVED_NUMBER_FORMAT {
+            if let Some(number_formats) = &mut self.number_formats {
+                number_formats.insert(item.clone(), key);
+            } else {
+                self.number_formats = Some(BiHashMap::from_iter(vec![(item.clone(), key)]));
+            }
+
+            item
+        } else {
+            if let Some(number_formats) = &mut self.number_formats_builtin {
+                number_formats.insert(item.clone(), key);
+            } else {
+                self.number_formats = Some(BiHashMap::from_iter(vec![(item.clone(), key)]));
+            }
+
+            item
+        }
+    }
+
+    pub(crate) fn get_key_from_font_ref(&self, key: Arc<FontProperty>) -> Option<usize> {
+        if let Some(i) = self.fonts.get_by_left(&key) {
+            Some(*i)
+        } else {
+            None
+        }
+    }
+
+    pub(crate) fn get_font_ref_from_key(&self, key: Key) -> Option<Arc<FontProperty>> {
         if let Some(i) = self.fonts.get_by_right(&key) {
             Some(i.clone())
         } else {
@@ -682,21 +1277,51 @@ impl Stylesheet {
         }
     }
 
-    /// Get the fill format ref from key
-    pub(crate) fn get_fill_ref_from_key(&mut self, key: Key) -> Option<Arc<Fill>> {
+    pub(crate) fn add_font_ref_to_table(&mut self, item: Arc<FontProperty>) -> Arc<FontProperty> {
+        self.fonts.insert(item.clone(), self.fonts.len());
+        item
+    }
+
+    pub(crate) fn get_key_from_fill_ref(&self, key: Arc<Fill>) -> Option<usize> {
+        if let Some(i) = self.fills.get_by_left(&key) {
+            Some(*i)
+        } else {
+            None
+        }
+    }
+
+    pub(crate) fn get_fill_ref_from_key(&self, key: Key) -> Option<Arc<Fill>> {
         if let Some(i) = self.fills.get_by_right(&key) {
             Some(i.clone())
         } else {
             None
         }
     }
-    /// Get the border format ref from key
-    pub(crate) fn get_border_ref_from_key(&mut self, key: Key) -> Option<Arc<Border>> {
+
+    pub(crate) fn add_fill_ref_to_table(&mut self, item: Arc<Fill>) -> Arc<Fill> {
+        self.fills.insert(item.clone(), self.fills.len());
+        item
+    }
+
+    pub(crate) fn get_key_from_border_ref(&self, key: Arc<Border>) -> Option<usize> {
+        if let Some(i) = self.borders.get_by_left(&key) {
+            Some(*i)
+        } else {
+            None
+        }
+    }
+
+    pub(crate) fn get_border_ref_from_key(&self, key: Key) -> Option<Arc<Border>> {
         if let Some(i) = self.borders.get_by_right(&key) {
             Some(i.clone())
         } else {
             None
         }
+    }
+
+    pub(crate) fn add_border_ref_to_table(&mut self, item: Arc<Border>) -> Arc<Border> {
+        self.borders.insert(item.clone(), self.borders.len());
+        item
     }
 
     /// Read either left, right, top, or bottom of borders
@@ -777,6 +1402,16 @@ impl Stylesheet {
                                                     tint: None,
                                                 });
                                             }
+                                            QName(b"auto") => {
+                                                border_region.color = Some(Color::Auto(
+                                                    a.unescape_value()?.parse::<u32>()?,
+                                                ));
+                                            }
+                                            QName(b"indexed") => {
+                                                border_region.color = Some(Color::Index(
+                                                    a.unescape_value()?.parse::<u32>()?,
+                                                ))
+                                            }
                                             QName(b"tint") => match border_region.color {
                                                 Some(Color::Theme { id, .. }) => {
                                                     border_region.color = Some(Color::Theme {
@@ -805,7 +1440,7 @@ impl Stylesheet {
                     }
                 }
                 Ok(Event::Empty(_)) => return Ok(border_region),
-                _ => (),
+                _ => return Ok(border_region),
             }
         }
     }
@@ -870,6 +1505,9 @@ impl Stylesheet {
                                         id: a.unescape_value()?.parse::<u32>()?,
                                         tint: None,
                                     };
+                                }
+                                QName(b"auto") => {
+                                    font.color = Color::Auto(a.unescape_value()?.parse::<u32>()?);
                                 }
                                 QName(b"tint") => match font.color {
                                     Color::Theme { id, .. } => {
@@ -973,6 +1611,14 @@ impl Stylesheet {
                                         tint: None,
                                     });
                                 }
+                                QName(b"auto") => {
+                                    fill.foreground =
+                                        Some(Color::Auto(a.unescape_value()?.parse::<u32>()?));
+                                }
+                                QName(b"indexed") => {
+                                    fill.foreground =
+                                        Some(Color::Index(a.unescape_value()?.parse::<u32>()?))
+                                }
                                 QName(b"tint") => match fill.foreground {
                                     Some(Color::Theme { id, .. }) => {
                                         fill.foreground = Some(Color::Theme {
@@ -1000,6 +1646,14 @@ impl Stylesheet {
                                         id: a.unescape_value()?.to_string().parse::<u32>()?,
                                         tint: None,
                                     });
+                                }
+                                QName(b"auto") => {
+                                    fill.background =
+                                        Some(Color::Auto(a.unescape_value()?.parse::<u32>()?));
+                                }
+                                QName(b"indexed") => {
+                                    fill.background =
+                                        Some(Color::Index(a.unescape_value()?.parse::<u32>()?))
                                 }
                                 QName(b"tint") => match fill.background {
                                     Some(Color::Theme { id, .. }) => {
@@ -1053,32 +1707,12 @@ mod stylesheet_unittests {
         stylesheet
     }
 
-    mod stylesheet_edge_cases {
-        use crate::stream::xlsx::stylesheet::{stylesheet_unittests::init, Color, FontProperty};
-
-        #[test]
-        fn first_default_font_should_be_skipped() {
-            let mut style = init("tests/workbook03.xlsx");
-            let font = style.get_font_ref_from_key(2).unwrap();
-            assert_eq!(
-                *font,
-                FontProperty {
-                    size: "11".into(),
-                    color: Color::Theme { id: 1, tint: None },
-                    font: "Calibri".into(),
-                    family: 2,
-                    scheme: "minor".into(),
-                    ..Default::default()
-                }
-            );
-        }
-    }
-
     mod stylesheet_api {
         use super::init;
+        use crate::stream::utils::Save;
         use crate::stream::xlsx::stylesheet::{
-            Border, BorderRegion, BorderStyle, CellXf, DiffXf, Fill, FontProperty, FormatType,
-            NumberFormat, PatternFill,
+            Border, BorderRegion, BorderStyle, CellXf, DiffXf, Fill, FontProperty, NumberFormat,
+            PatternFill,
         };
         use crate::stream::xlsx::{
             stylesheet::{Color, Rgb},
@@ -1087,6 +1721,8 @@ mod stylesheet_unittests {
         use quick_xml::{events::Event, name::QName, Reader};
         use std::io::Cursor;
         use std::sync::Arc;
+        use zip::write::SimpleFileOptions;
+        use zip::{CompressionMethod, ZipWriter};
 
         #[test]
         fn get_custom_table_style() {
@@ -1354,7 +1990,8 @@ mod stylesheet_unittests {
                                 color: Color::Theme { id: 1, tint: None },
                                 font: "Calibri".into(),
                                 family: 2,
-                                scheme: "minor".into()
+                                scheme: "minor".into(),
+                                ..Default::default()
                             }
                         );
 
@@ -1401,7 +2038,8 @@ mod stylesheet_unittests {
                                 color: Color::Theme { id: 1, tint: None },
                                 font: "Calibri".into(),
                                 family: 2,
-                                scheme: "minor".into()
+                                scheme: "minor".into(),
+                                ..Default::default()
                             }
                         );
 
@@ -1448,7 +2086,8 @@ mod stylesheet_unittests {
                                 color: Color::Theme { id: 1, tint: None },
                                 font: "Calibri".into(),
                                 family: 2,
-                                scheme: "minor".into()
+                                scheme: "minor".into(),
+                                ..Default::default()
                             }
                         );
 
@@ -1614,14 +2253,14 @@ mod stylesheet_unittests {
 
         #[test]
         fn test_get_cell_ref_from_key_and_not_exists() {
-            let mut style = init("tests/workbook03.xlsx");
+            let style = init("tests/workbook03.xlsx");
             let actual = style.get_cell_ref_from_key(29);
             assert_eq!(actual, None)
         }
 
         #[test]
         fn test_get_cell_ref_from_key_and_exists() {
-            let mut style = init("tests/workbook03.xlsx");
+            let style = init("tests/workbook03.xlsx");
             let actual = style.get_cell_ref_from_key(1).unwrap();
             assert_eq!(
                 actual,
@@ -1641,11 +2280,9 @@ mod stylesheet_unittests {
                         ..Default::default()
                     }),
                     border: Arc::new(Border {
-                        left: BorderRegion::default(),
-                        right: BorderRegion::default(),
-                        top: BorderRegion::default(),
-                        bottom: BorderRegion::default()
-                    })
+                        ..Default::default()
+                    }),
+                    ..Default::default()
                 }
                 .into()
             );
@@ -1653,7 +2290,7 @@ mod stylesheet_unittests {
 
         #[test]
         fn test_get_differential_ref_from_key_and_exists() {
-            let mut style = init("tests/workbook04.xlsx");
+            let style = init("tests/workbook04.xlsx");
             let actual = style.get_differential_ref_from_key(1).unwrap();
             assert_eq!(
                 actual,
@@ -1674,36 +2311,34 @@ mod stylesheet_unittests {
 
         #[test]
         fn test_get_differential_ref_from_key_and_not_exists() {
-            let mut style = init("tests/workbook04.xlsx");
+            let style = init("tests/workbook04.xlsx");
             let actual = style.get_differential_ref_from_key(11);
             assert_eq!(actual, None)
         }
 
         #[test]
         fn test_get_number_format_ref_from_key_and_exists() {
-            let mut style = init("tests/workbook03.xlsx");
+            let style = init("tests/workbook03.xlsx");
             let actual = style.get_number_format_ref_from_key(43);
             assert_eq!(
                 actual,
                 Some(Arc::new(NumberFormat {
                     id: 43,
-                    format_code: FormatType::Custom(
-                        r#"_(* #,##0.00_);_(* \(#,##0.00\);_(* "-"??_);_(@_)"#.into()
-                    )
+                    format_code: r#"_(* #,##0.00_);_(* \(#,##0.00\);_(* "-"??_);_(@_)"#.into()
                 }))
             )
         }
 
         #[test]
         fn test_get_number_format_ref_from_key_and_not_exists() {
-            let mut style = init("tests/workbook04.xlsx");
+            let style = init("tests/workbook04.xlsx");
             let actual = style.get_number_format_ref_from_key(11);
             assert_eq!(actual, None)
         }
 
         #[test]
         fn test_get_font_ref_from_key_and_exists() {
-            let mut style = init("tests/workbook03.xlsx");
+            let style = init("tests/workbook03.xlsx");
             let actual = style.get_font_ref_from_key(3);
             assert_eq!(
                 actual,
@@ -1720,14 +2355,14 @@ mod stylesheet_unittests {
 
         #[test]
         fn test_get_font_ref_from_key_and_not_exists() {
-            let mut style = init("tests/workbook03.xlsx");
+            let style = init("tests/workbook03.xlsx");
             let actual = style.get_font_ref_from_key(30);
             assert_eq!(actual, None)
         }
 
         #[test]
         fn test_get_fill_ref_from_key_and_exists() {
-            let mut style = init("tests/workbook03.xlsx");
+            let style = init("tests/workbook03.xlsx");
             let actual = style.get_fill_ref_from_key(3);
             assert_eq!(
                 actual,
@@ -1741,37 +2376,60 @@ mod stylesheet_unittests {
 
         #[test]
         fn test_get_fill_ref_from_key_and_not_exists() {
-            let mut style = init("tests/workbook03.xlsx");
+            let style = init("tests/workbook03.xlsx");
             let actual = style.get_fill_ref_from_key(30);
             assert_eq!(actual, None)
         }
 
         #[test]
         fn test_get_border_ref_from_key_and_exists() {
-            let mut style = init("tests/workbook03.xlsx");
+            let style = init("tests/workbook03.xlsx");
             let actual = style.get_border_ref_from_key(3);
             assert_eq!(
                 actual,
                 Some(Arc::new(Border {
-                    left: BorderRegion::default(),
-                    right: BorderRegion::default(),
-                    top: BorderRegion::default(),
                     bottom: BorderRegion {
                         style: Some(BorderStyle::Medium),
                         color: Some(Color::Theme {
                             id: 4,
                             tint: Some("0.39997558519241921".into())
                         })
-                    }
+                    },
+                    ..Default::default()
                 }))
             )
         }
 
         #[test]
         fn test_get_border_ref_from_key_and_not_exists() {
-            let mut style = init("tests/workbook03.xlsx");
+            let style = init("tests/workbook03.xlsx");
             let actual = style.get_border_ref_from_key(30);
             assert_eq!(actual, None)
+        }
+
+        #[test]
+        fn save_file() {
+            let mut style = init("tests/workbook04.xlsx");
+            let mut zip = ZipWriter::new(Cursor::new(Vec::<u8>::new()));
+            style
+                .save(
+                    &mut zip,
+                    SimpleFileOptions::default().compression_method(CompressionMethod::Deflated),
+                )
+                .unwrap();
+
+            // Verify all data is written
+            assert!(zip.finish().unwrap().into_inner().len() > 22);
+        }
+
+        #[test]
+        fn savre_file() {
+            let style = init("tests/workbook04.xlsx");
+            crate::stream::utils::XmlWriter::write_xml(
+                &style,
+                &mut quick_xml::Writer::new(std::fs::File::create("tests/styles.xml").unwrap()),
+                "styleSheet",
+            );
         }
     }
 }

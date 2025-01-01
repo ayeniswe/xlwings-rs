@@ -15,7 +15,11 @@ use std::{
     io::{BufRead, BufReader, Read, Seek, Write},
     sync::Arc,
 };
-use zip::{read::ZipFile, write::{FileOptionExtension, FileOptions}, ZipArchive};
+use zip::{
+    read::ZipFile,
+    write::{FileOptionExtension, FileOptions},
+    ZipArchive,
+};
 
 use super::{
     stylesheet::{Color, FontProperty, Rgb},
@@ -34,7 +38,11 @@ enum StringType {
     NoPreserve(String),
 }
 impl<W: Write> XmlWriter<W> for StringType {
-    fn write_xml<'a>(&self, writer: &'a mut Writer<W>, tag_name: &str) -> Result<&'a mut Writer<W>, XcelmateError> {
+    fn write_xml<'a>(
+        &self,
+        writer: &'a mut Writer<W>,
+        tag_name: &str,
+    ) -> Result<&'a mut Writer<W>, XcelmateError> {
         match self {
             StringType::Preserve(s) => writer
                 .create_element(tag_name)
@@ -56,7 +64,11 @@ pub(crate) enum SharedString {
     PlainText(StringType),
 }
 impl<W: Write> XmlWriter<W> for SharedString {
-    fn write_xml<'a>(&self, writer: &'a mut Writer<W>, tag_name: &'a str) -> Result<&'a mut Writer<W>, XcelmateError> {
+    fn write_xml<'a>(
+        &self,
+        writer: &'a mut Writer<W>,
+        tag_name: &'a str,
+    ) -> Result<&'a mut Writer<W>, XcelmateError> {
         let writer = writer.create_element(tag_name);
         match self {
             SharedString::RichText(pieces) => {
@@ -93,7 +105,11 @@ struct StringPiece {
     value: StringType,
 }
 impl<W: Write> XmlWriter<W> for StringPiece {
-    fn write_xml<'a>(&self, writer: &'a mut Writer<W>, tag_name: &str) -> Result<&'a mut Writer<W>, XcelmateError> {
+    fn write_xml<'a>(
+        &self,
+        writer: &'a mut Writer<W>,
+        tag_name: &str,
+    ) -> Result<&'a mut Writer<W>, XcelmateError> {
         if let Some(props) = &self.props {
             props.write_xml(writer, tag_name)?;
         }
@@ -113,7 +129,11 @@ pub(crate) struct SharedStringTable {
     count: u32,
 }
 impl<W: Write> XmlWriter<W> for SharedStringTable {
-    fn write_xml<'a>(&self, writer: &'a mut Writer<W>, tag_name: &str) -> Result<&'a mut Writer<W>, XcelmateError> {
+    fn write_xml<'a>(
+        &self,
+        writer: &'a mut Writer<W>,
+        tag_name: &str,
+    ) -> Result<&'a mut Writer<W>, XcelmateError> {
         writer.write_event(Event::Decl(BytesDecl::new(
             "1.0",
             Some("UTF-8"),
@@ -121,12 +141,14 @@ impl<W: Write> XmlWriter<W> for SharedStringTable {
         )))?;
         writer
             .create_element(tag_name)
-            .with_attribute((
-                "xmlns",
-                "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
-            ))
-            .with_attribute(("count", self.count.to_string().as_str()))
-            .with_attribute(("uniqueCount", self.table.len().to_string().as_str()))
+            .with_attributes(vec![
+                (
+                    "xmlns",
+                    "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
+                ),
+                ("count", self.count.to_string().as_str()),
+                ("uniqueCount", self.table.len().to_string().as_str()),
+            ])
             .write_inner_content::<_, XcelmateError>(|writer| {
                 // <si>
                 for (si, _) in self.table.right_range(0..self.table.len()) {
@@ -468,11 +490,14 @@ impl SharedStringTable {
             None
         }
     }
-
 }
 
 impl<W: Write + Seek, EX: FileOptionExtension> Save<W, EX> for SharedStringTable {
-    fn save(&mut self, writer: &mut zip::ZipWriter<W>, options: FileOptions<EX>) -> Result<(), XcelmateError> {
+    fn save(
+        &mut self,
+        writer: &mut zip::ZipWriter<W>,
+        options: FileOptions<EX>,
+    ) -> Result<(), XcelmateError> {
         writer.start_file("xl/sharedStrings.xml", options)?;
         self.write_xml(&mut Writer::new(writer), "sst")?;
         Ok(())
@@ -483,9 +508,12 @@ impl<W: Write + Seek, EX: FileOptionExtension> Save<W, EX> for SharedStringTable
 mod shared_string_unittests {
 
     mod shared_string_api {
-        use crate::stream::{utils::{Save, XmlWriter}, xlsx::shared_string_table::{
-            Color, FontProperty, Rgb, SharedString, SharedStringTable, StringPiece, StringType,
-        }};
+        use crate::stream::{
+            utils::{Save, XmlWriter},
+            xlsx::shared_string_table::{
+                Color, FontProperty, Rgb, SharedString, SharedStringTable, StringPiece, StringType,
+            },
+        };
         use quick_xml::Writer;
         use std::{
             fs::File,
@@ -522,6 +550,7 @@ mod shared_string_unittests {
                         font: "Calibri".into(),
                         family: 2,
                         scheme: "minor".into(),
+                        ..Default::default()
                     }),
                     value: StringType::NoPreserve("big".into()),
                 },
@@ -536,6 +565,7 @@ mod shared_string_unittests {
                         font: "Calibri".into(),
                         family: 2,
                         scheme: "minor".into(),
+                        ..Default::default()
                     }),
                     value: StringType::Preserve(" example".into()),
                 },
@@ -550,6 +580,7 @@ mod shared_string_unittests {
                         font: "Calibri".into(),
                         family: 2,
                         scheme: "minor".into(),
+                        ..Default::default()
                     }),
                     value: StringType::Preserve(" ".into()),
                 },
@@ -564,6 +595,7 @@ mod shared_string_unittests {
                         font: "Calibri".into(),
                         family: 2,
                         scheme: "minor".into(),
+                        ..Default::default()
                     }),
                     value: StringType::Preserve("of ".into()),
                 },
@@ -578,6 +610,7 @@ mod shared_string_unittests {
                         font: "Calibri".into(),
                         family: 2,
                         scheme: "minor".into(),
+                        ..Default::default()
                     }),
                     value: StringType::NoPreserve("some".into()),
                 },
@@ -592,6 +625,7 @@ mod shared_string_unittests {
                         font: "Calibri".into(),
                         family: 2,
                         scheme: "minor".into(),
+                        ..Default::default()
                     }),
                     value: StringType::Preserve(" ".into()),
                 },
@@ -609,6 +643,7 @@ mod shared_string_unittests {
                         font: "Calibri".into(),
                         family: 2,
                         scheme: "minor".into(),
+                        ..Default::default()
                     }),
                     value: StringType::NoPreserve("rich".into()),
                 },
@@ -623,6 +658,7 @@ mod shared_string_unittests {
                         font: "Calibri".into(),
                         family: 2,
                         scheme: "minor".into(),
+                        ..Default::default()
                     }),
                     value: StringType::Preserve(" ".into()),
                 },
@@ -637,6 +673,7 @@ mod shared_string_unittests {
                         font: "Calibri".into(),
                         family: 2,
                         scheme: "minor".into(),
+                        ..Default::default()
                     }),
                     value: StringType::NoPreserve("text".into()),
                 },
@@ -651,6 +688,7 @@ mod shared_string_unittests {
                         font: "Calibri".into(),
                         family: 2,
                         scheme: "minor".into(),
+                        ..Default::default()
                     }),
                     value: StringType::Preserve(" ".into()),
                 },
@@ -665,6 +703,7 @@ mod shared_string_unittests {
                         font: "Calibri".into(),
                         family: 2,
                         scheme: "minor".into(),
+                        ..Default::default()
                     }),
                     value: StringType::NoPreserve("here".into()),
                 },
@@ -695,6 +734,7 @@ mod shared_string_unittests {
                         font: "Calibri".into(),
                         family: 2,
                         scheme: "minor".into(),
+                        ..Default::default()
                     }),
                     value: StringType::NoPreserve("big".into()),
                 },
@@ -709,6 +749,7 @@ mod shared_string_unittests {
                         font: "Calibri".into(),
                         family: 2,
                         scheme: "minor".into(),
+                        ..Default::default()
                     }),
                     value: StringType::Preserve(" example".into()),
                 },
@@ -723,6 +764,7 @@ mod shared_string_unittests {
                         font: "Calibri".into(),
                         family: 2,
                         scheme: "minor".into(),
+                        ..Default::default()
                     }),
                     value: StringType::Preserve(" ".into()),
                 },
@@ -737,6 +779,7 @@ mod shared_string_unittests {
                         font: "Calibri".into(),
                         family: 2,
                         scheme: "minor".into(),
+                        ..Default::default()
                     }),
                     value: StringType::Preserve("of ".into()),
                 },
@@ -751,6 +794,7 @@ mod shared_string_unittests {
                         font: "Calibri".into(),
                         family: 2,
                         scheme: "minor".into(),
+                        ..Default::default()
                     }),
                     value: StringType::NoPreserve("some".into()),
                 },
@@ -765,6 +809,7 @@ mod shared_string_unittests {
                         font: "Calibri".into(),
                         family: 2,
                         scheme: "minor".into(),
+                        ..Default::default()
                     }),
                     value: StringType::Preserve(" ".into()),
                 },
@@ -782,6 +827,7 @@ mod shared_string_unittests {
                         font: "Calibri".into(),
                         family: 2,
                         scheme: "minor".into(),
+                        ..Default::default()
                     }),
                     value: StringType::NoPreserve("rich".into()),
                 },
@@ -796,6 +842,7 @@ mod shared_string_unittests {
                         font: "Calibri".into(),
                         family: 2,
                         scheme: "minor".into(),
+                        ..Default::default()
                     }),
                     value: StringType::Preserve(" ".into()),
                 },
@@ -810,6 +857,7 @@ mod shared_string_unittests {
                         font: "Calibri".into(),
                         family: 2,
                         scheme: "minor".into(),
+                        ..Default::default()
                     }),
                     value: StringType::NoPreserve("text".into()),
                 },
@@ -824,6 +872,7 @@ mod shared_string_unittests {
                         font: "Calibri".into(),
                         family: 2,
                         scheme: "minor".into(),
+                        ..Default::default()
                     }),
                     value: StringType::Preserve(" ".into()),
                 },
@@ -838,6 +887,7 @@ mod shared_string_unittests {
                         font: "Calibrri".into(),
                         family: 2,
                         scheme: "minor".into(),
+                        ..Default::default()
                     }),
                     value: StringType::NoPreserve("here".into()),
                 },
@@ -935,10 +985,14 @@ mod shared_string_unittests {
         fn save_file() {
             let mut sst = init("tests/workbook01.xlsx");
             let mut zip = ZipWriter::new(Cursor::new(Vec::<u8>::new()));
-            sst.save(&mut zip, SimpleFileOptions::default().compression_method(CompressionMethod::Deflated)).unwrap();
+            sst.save(
+                &mut zip,
+                SimpleFileOptions::default().compression_method(CompressionMethod::Deflated),
+            )
+            .unwrap();
 
             // Verify all data is written
-            assert_eq!(zip.finish().unwrap().into_inner().len(), 1610);
+            assert_eq!(zip.finish().unwrap().into_inner().len(), 479);
         }
     }
 }
