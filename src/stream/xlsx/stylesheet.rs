@@ -659,6 +659,22 @@ impl<W: Write> XmlWriter<W> for Stylesheet {
                         }
                         Ok(())
                     });
+                // <cellStyleXfs>
+                let _ = writer
+                    .create_element("cellStyleXfs")
+                    .with_attribute(("count", "1"))
+                    .write_inner_content::<_, XcelmateError>(|writer| {
+                        writer
+                            .create_element("xf")
+                            .with_attributes(vec![
+                                ("numFmtId", "0"),
+                                ("fontId", "0"),
+                                ("fillId", "0"),
+                                ("borderId", "0"),
+                            ])
+                            .write_empty()?;
+                        Ok(())
+                    });
                 // <cellXfs>
                 let _ = writer
                     .create_element("cellXfs")
@@ -737,6 +753,21 @@ impl<W: Write> XmlWriter<W> for Stylesheet {
                                 writer.write_empty()?;
                             };
                         }
+                        Ok(())
+                    });
+                // <cellStyles>
+                let _ = writer
+                    .create_element("cellStyles")
+                    .with_attribute(("count", "1"))
+                    .write_inner_content::<_, XcelmateError>(|writer| {
+                        writer
+                            .create_element("cellStyle")
+                            .with_attributes(vec![
+                                ("name", "Normal"),
+                                ("xfId", "0"),
+                                ("builtinId", "0"),
+                            ])
+                            .write_empty()?;
                         Ok(())
                     });
                 // <dxfs>
@@ -1922,6 +1953,7 @@ mod stylesheet_unittests {
             Stylesheet,
         };
         use quick_xml::{events::Event, Reader};
+        use std::fs::File;
         use std::io::Cursor;
         use std::sync::Arc;
         use zip::write::SimpleFileOptions;
@@ -2684,14 +2716,5 @@ mod stylesheet_unittests {
             assert!(zip.finish().unwrap().into_inner().len() > 22);
         }
 
-        #[test]
-        fn savre_file() {
-            let style = init("tests/workbook04.xlsx");
-            crate::stream::utils::XmlWriter::write_xml(
-                &style,
-                &mut quick_xml::Writer::new(std::fs::File::create("tests/styles.xml").unwrap()),
-                "styleSheet",
-            );
-        }
     }
 }
