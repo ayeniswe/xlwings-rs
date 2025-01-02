@@ -1,6 +1,7 @@
 //! The module holds all logic to fully deserialize a .xlsx file and its contents
 mod shared_string_table;
 mod stylesheet;
+mod sheet;
 
 use crate::errors::XcelmateError;
 use shared_string_table::SharedStringTable;
