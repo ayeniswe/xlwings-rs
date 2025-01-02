@@ -4,7 +4,7 @@ use crate::{
 };
 use bimap::{BiBTreeMap, BiHashMap, BiMap};
 use quick_xml::{
-    events::{BytesDecl, Event},
+    events::{BytesDecl, BytesStart, Event},
     name::QName,
     Reader, Writer,
 };
@@ -889,20 +889,16 @@ impl Stylesheet {
                 // FILL
                 /////////////
                 Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"fill" => {
-                    let fill = Stylesheet::read_fill(&mut xml)?;
+                    let fill = Stylesheet::read_fill(&mut xml, e.name())?;
                     self.add_fill_ref_to_table(fill.into());
                 }
                 ////////////////////
                 // BORDER
                 /////////////
                 Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"border" => {
-                    let mut border = Border::default();
-                    border.left = Stylesheet::read_border_region(&mut xml, QName(b"left"))?;
-                    border.right = Stylesheet::read_border_region(&mut xml, QName(b"right"))?;
-                    border.top = Stylesheet::read_border_region(&mut xml, QName(b"top"))?;
-                    border.bottom = Stylesheet::read_border_region(&mut xml, QName(b"bottom"))?;
-                    border.diagonal = Stylesheet::read_border_region(&mut xml, QName(b"diagonal"))?;
-                    self.add_border_ref_to_table(border.into());
+                    self.add_border_ref_to_table(
+                        Stylesheet::read_border(&mut xml, e.name())?.into(),
+                    );
                 }
                 ////////////////////
                 // CELL REFERENCES
@@ -1052,26 +1048,10 @@ impl Stylesheet {
                                 diff_xf.font = Some(Stylesheet::read_font(&mut xml, e.name())?);
                             }
                             Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"border" => {
-                                let mut border = Border::default();
-                                border.left =
-                                    Stylesheet::read_border_region(&mut xml, QName(b"left"))?;
-                                border.right =
-                                    Stylesheet::read_border_region(&mut xml, QName(b"right"))?;
-                                border.top =
-                                    Stylesheet::read_border_region(&mut xml, QName(b"top"))?;
-                                border.bottom =
-                                    Stylesheet::read_border_region(&mut xml, QName(b"bottom"))?;
-                                border.vertical =
-                                    Stylesheet::read_border_region(&mut xml, QName(b"vertical"))?;
-
-                                border.horizontal =
-                                    Stylesheet::read_border_region(&mut xml, QName(b"horizontal"))?;
-                                border.diagonal =
-                                    Stylesheet::read_border_region(&mut xml, QName(b"diagonal"))?;
-                                diff_xf.border = Some(border);
+                                diff_xf.border = Some(Stylesheet::read_border(&mut xml, e.name())?);
                             }
                             Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"fill" => {
-                                diff_xf.fill = Some(Stylesheet::read_fill(&mut xml)?);
+                                diff_xf.fill = Some(Stylesheet::read_fill(&mut xml, e.name())?);
                             }
                             Ok(Event::End(ref e)) if e.local_name().as_ref() == b"dxf" => break,
                             Ok(Event::Eof) => return Err(XcelmateError::XmlEof("dxf".into())),
@@ -1414,123 +1394,144 @@ impl Stylesheet {
         item
     }
 
-    /// Read either left, right, top, or bottom of borders
-    fn read_border_region<B: BufRead>(
+    /// Read either left, right, top, bottom, diagonal, vertical, or horizontal of borders
+    fn read_border<B: BufRead>(
         xml: &mut Reader<B>,
         QName(mut closing): QName,
-    ) -> Result<BorderRegion, XcelmateError> {
+    ) -> Result<Border, XcelmateError> {
+        fn read_region<B: BufRead>(
+            xml: &mut Reader<B>,
+            region: &BytesStart,
+            border_region: &mut BorderRegion,
+        ) -> Result<(), XcelmateError> {
+            for attr in region.attributes() {
+                if let Ok(a) = attr {
+                    ////////////////////
+                    // BORDER Attrs
+                    /////////////
+                    match a.key {
+                        QName(b"style") => {
+                            let val = a.unescape_value()?.to_string();
+                            match val.as_str() {
+                                "thin" => border_region.style = Some(BorderStyle::Thin),
+                                "medium" => border_region.style = Some(BorderStyle::Medium),
+                                "thick" => border_region.style = Some(BorderStyle::Thick),
+                                "double" => border_region.style = Some(BorderStyle::Double),
+                                "dashed" => border_region.style = Some(BorderStyle::Dashed),
+                                "dotted" => border_region.style = Some(BorderStyle::Dotted),
+                                "dashDot" => border_region.style = Some(BorderStyle::DashDot),
+                                "dashDotDot" => border_region.style = Some(BorderStyle::DashDotDot),
+                                "slantDashDot" => {
+                                    border_region.style = Some(BorderStyle::SlantDashDot)
+                                }
+                                "hair" => border_region.style = Some(BorderStyle::Hair),
+                                "mediumDashed" => {
+                                    border_region.style = Some(BorderStyle::MediumDashed)
+                                }
+                                "mediumDashDot" => {
+                                    border_region.style = Some(BorderStyle::MediumDashDot)
+                                }
+                                "mediumDashDotDot" => {
+                                    border_region.style = Some(BorderStyle::MediumDashDotDot)
+                                }
+                                _ => (), // Ignore unsupported or unknown values
+                            }
+                        }
+                        _ => (),
+                    }
+                }
+            }
+            let mut border_region_buf = Vec::with_capacity(1024);
+            loop {
+                border_region_buf.clear();
+                match xml.read_event_into(&mut border_region_buf) {
+                    ////////////////////
+                    // BORDER (LRTB) nth-1
+                    /////////////
+                    Ok(Event::Empty(ref e)) if e.local_name().as_ref() == b"color" => {
+                        for attr in e.attributes() {
+                            if let Ok(a) = attr {
+                                match a.key {
+                                    QName(b"rgb") => {
+                                        border_region.color = Some(Stylesheet::to_rgb(
+                                            a.unescape_value()?.to_string(),
+                                        )?)
+                                    }
+                                    QName(b"theme") => {
+                                        border_region.color = Some(Color::Theme {
+                                            id: a.unescape_value()?.parse::<u32>()?,
+                                            tint: None,
+                                        });
+                                    }
+                                    QName(b"auto") => {
+                                        border_region.color =
+                                            Some(Color::Auto(a.unescape_value()?.parse::<u32>()?));
+                                    }
+                                    QName(b"indexed") => {
+                                        border_region.color =
+                                            Some(Color::Index(a.unescape_value()?.parse::<u32>()?))
+                                    }
+                                    QName(b"tint") => match border_region.color {
+                                        Some(Color::Theme { id, .. }) => {
+                                            border_region.color = Some(Color::Theme {
+                                                id,
+                                                tint: Some(a.unescape_value()?.to_string()),
+                                            })
+                                        }
+                                        _ => (),
+                                    },
+                                    _ => (),
+                                }
+                            }
+                        }
+                    }
+                    Ok(Event::End(ref e)) if e.local_name().as_ref() == region.name().as_ref() => {
+                        return Ok(())
+                    }
+                    Ok(Event::Eof) => {
+                        let mut name = String::new();
+                        let _ = region.as_ref().read_to_string(&mut name)?;
+                        return Err(XcelmateError::XmlEof(name));
+                    }
+                    Err(e) => return Err(XcelmateError::Xml(e)),
+                    _ => (),
+                }
+            }
+        }
+
         let mut buf = Vec::with_capacity(1024);
-        let mut border_region = BorderRegion::default();
+        let mut border = Border::default();
         loop {
             buf.clear();
             match xml.read_event_into(&mut buf) {
-                ////////////////////
-                // BORDER (LRTB)
-                /////////////
-                Ok(Event::Start(ref e)) if e.local_name().as_ref() == closing => {
-                    for attr in e.attributes() {
-                        if let Ok(a) = attr {
-                            ////////////////////
-                            // BORDER (LRTB) Attrs
-                            /////////////
-                            match a.key {
-                                QName(b"style") => {
-                                    let val = a.unescape_value()?.to_string();
-                                    match val.as_str() {
-                                        "thin" => border_region.style = Some(BorderStyle::Thin),
-                                        "medium" => border_region.style = Some(BorderStyle::Medium),
-                                        "thick" => border_region.style = Some(BorderStyle::Thick),
-                                        "double" => border_region.style = Some(BorderStyle::Double),
-                                        "dashed" => border_region.style = Some(BorderStyle::Dashed),
-                                        "dotted" => border_region.style = Some(BorderStyle::Dotted),
-                                        "dashDot" => {
-                                            border_region.style = Some(BorderStyle::DashDot)
-                                        }
-                                        "dashDotDot" => {
-                                            border_region.style = Some(BorderStyle::DashDotDot)
-                                        }
-                                        "slantDashDot" => {
-                                            border_region.style = Some(BorderStyle::SlantDashDot)
-                                        }
-                                        "hair" => border_region.style = Some(BorderStyle::Hair),
-                                        "mediumDashed" => {
-                                            border_region.style = Some(BorderStyle::MediumDashed)
-                                        }
-                                        "mediumDashDot" => {
-                                            border_region.style = Some(BorderStyle::MediumDashDot)
-                                        }
-                                        "mediumDashDotDot" => {
-                                            border_region.style =
-                                                Some(BorderStyle::MediumDashDotDot)
-                                        }
-                                        _ => (), // Ignore unsupported or unknown values
-                                    }
-                                }
-                                _ => (),
-                            }
-                        }
-                    }
-                    let mut border_region_buf = Vec::with_capacity(1024);
-                    loop {
-                        border_region_buf.clear();
-                        match xml.read_event_into(&mut border_region_buf) {
-                            ////////////////////
-                            // BORDER (LRTB) nth-1
-                            /////////////
-                            Ok(Event::Empty(ref e)) if e.local_name().as_ref() == b"color" => {
-                                for attr in e.attributes() {
-                                    if let Ok(a) = attr {
-                                        match a.key {
-                                            QName(b"rgb") => {
-                                                border_region.color = Some(Stylesheet::to_rgb(
-                                                    a.unescape_value()?.to_string(),
-                                                )?)
-                                            }
-                                            QName(b"theme") => {
-                                                border_region.color = Some(Color::Theme {
-                                                    id: a.unescape_value()?.parse::<u32>()?,
-                                                    tint: None,
-                                                });
-                                            }
-                                            QName(b"auto") => {
-                                                border_region.color = Some(Color::Auto(
-                                                    a.unescape_value()?.parse::<u32>()?,
-                                                ));
-                                            }
-                                            QName(b"indexed") => {
-                                                border_region.color = Some(Color::Index(
-                                                    a.unescape_value()?.parse::<u32>()?,
-                                                ))
-                                            }
-                                            QName(b"tint") => match border_region.color {
-                                                Some(Color::Theme { id, .. }) => {
-                                                    border_region.color = Some(Color::Theme {
-                                                        id,
-                                                        tint: Some(a.unescape_value()?.to_string()),
-                                                    })
-                                                }
-                                                _ => (),
-                                            },
-                                            _ => (),
-                                        }
-                                    }
-                                }
-                            }
-                            Ok(Event::End(ref e)) if e.local_name().as_ref() == closing => {
-                                return Ok(border_region)
-                            }
-                            Ok(Event::Eof) => {
-                                let mut name = String::new();
-                                let _ = closing.read_to_string(&mut name)?;
-                                return Err(XcelmateError::XmlEof(name));
-                            }
-                            Err(e) => return Err(XcelmateError::Xml(e)),
-                            _ => (),
-                        }
-                    }
+                Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"left" => {
+                    read_region(xml, e, &mut border.left)?;
                 }
-                Ok(Event::Empty(_)) => return Ok(border_region),
-                _ => return Ok(border_region),
+                Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"right" => {
+                    read_region(xml, e, &mut border.right)?;
+                }
+                Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"top" => {
+                    read_region(xml, e, &mut border.top)?;
+                }
+                Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"bottom" => {
+                    read_region(xml, e, &mut border.bottom)?;
+                }
+                Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"vertical" => {
+                    read_region(xml, e, &mut border.vertical)?;
+                }
+                Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"diagonal" => {
+                    read_region(xml, e, &mut border.diagonal)?;
+                }
+                Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"horizontal" => {
+                    read_region(xml, e, &mut border.horizontal)?;
+                }
+                Ok(Event::End(ref e)) if e.local_name().as_ref() == closing => return Ok(border),
+                Ok(Event::Eof) => {
+                    let mut name = String::new();
+                    let _ = closing.read_to_string(&mut name)?;
+                    return Err(XcelmateError::XmlEof(name));
+                }
+                _ => (),
             }
         }
     }
@@ -1763,7 +1764,10 @@ impl Stylesheet {
     }
 
     /// Read fill styling
-    fn read_fill<B: BufRead>(xml: &mut Reader<B>) -> Result<Fill, XcelmateError> {
+    fn read_fill<B: BufRead>(
+        xml: &mut Reader<B>,
+        QName(mut closing): QName,
+    ) -> Result<Fill, XcelmateError> {
         let mut buf = Vec::with_capacity(1024);
         let mut fill = Fill::default();
         loop {
@@ -1864,8 +1868,12 @@ impl Stylesheet {
                         }
                     }
                 }
-                Ok(Event::End(ref e)) if e.local_name().as_ref() == b"fill" => return Ok(fill),
-                Ok(Event::Eof) => return Err(XcelmateError::XmlEof("fill".into())),
+                Ok(Event::End(ref e)) if e.local_name().as_ref() == closing => return Ok(fill),
+                Ok(Event::Eof) => {
+                    let mut name = String::new();
+                    let _ = closing.read_to_string(&mut name)?;
+                    return Err(XcelmateError::XmlEof(name));
+                }
                 Err(e) => return Err(XcelmateError::Xml(e)),
                 _ => (),
             }
@@ -1913,7 +1921,7 @@ mod stylesheet_unittests {
             stylesheet::{Color, Rgb},
             Stylesheet,
         };
-        use quick_xml::{events::Event, name::QName, Reader};
+        use quick_xml::{events::Event, Reader};
         use std::io::Cursor;
         use std::sync::Arc;
         use zip::write::SimpleFileOptions;
@@ -1950,18 +1958,15 @@ mod stylesheet_unittests {
             loop {
                 match xml.read_event_into(&mut buf) {
                     Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"border" => {
-                        let actual =
-                            Stylesheet::read_border_region(&mut xml, QName(b"left")).unwrap();
-                        assert_eq!(actual, BorderRegion::default());
-                        let actual =
-                            Stylesheet::read_border_region(&mut xml, QName(b"right")).unwrap();
-                        assert_eq!(actual, BorderRegion::default());
-                        let actual =
-                            Stylesheet::read_border_region(&mut xml, QName(b"top")).unwrap();
-                        assert_eq!(actual, BorderRegion::default());
-                        let actual =
-                            Stylesheet::read_border_region(&mut xml, QName(b"bottom")).unwrap();
-                        assert_eq!(actual, BorderRegion::default());
+                        let border = Stylesheet::read_border(&mut xml, e.name()).unwrap();
+
+                        assert_eq!(border.left, BorderRegion::default());
+
+                        assert_eq!(border.right, BorderRegion::default());
+
+                        assert_eq!(border.top, BorderRegion::default());
+
+                        assert_eq!(border.bottom, BorderRegion::default());
                         break;
                     }
                     _ => (),
@@ -1986,6 +1991,15 @@ mod stylesheet_unittests {
                         <bottom style="dashed">
                             <color theme="1" tint="0.78785898899" />
                         </bottom>
+                        <vertical style="dashed">
+                            <color theme="2" tint="0.78785898899" />
+                        </vertical>
+                        <horizontal style="dashed">
+                            <color theme="3" tint="0.78785898899" />
+                        </horizontal>
+                        <diagonal style="dashed">
+                            <color theme="4" tint="0.78785898899" />
+                        </diagonal>
                     </border>
                 </root>
                 "#;
@@ -1995,37 +2009,30 @@ mod stylesheet_unittests {
             loop {
                 match xml.read_event_into(&mut buf) {
                     Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"border" => {
-                        let actual =
-                            Stylesheet::read_border_region(&mut xml, QName(b"left")).unwrap();
+                        let border = Stylesheet::read_border(&mut xml, e.name()).unwrap();
                         assert_eq!(
-                            actual,
+                            border.left,
                             BorderRegion {
                                 style: Some(BorderStyle::Double),
                                 color: Some(Color::Rgb(Rgb::Custom(35, 69, 103)))
                             }
                         );
-                        let actual =
-                            Stylesheet::read_border_region(&mut xml, QName(b"right")).unwrap();
                         assert_eq!(
-                            actual,
+                            border.right,
                             BorderRegion {
                                 style: Some(BorderStyle::Thick),
                                 color: Some(Color::Rgb(Rgb::Custom(35, 69, 103)))
                             }
                         );
-                        let actual =
-                            Stylesheet::read_border_region(&mut xml, QName(b"top")).unwrap();
                         assert_eq!(
-                            actual,
+                            border.top,
                             BorderRegion {
                                 style: Some(BorderStyle::Thin),
                                 color: Some(Color::Rgb(Rgb::Custom(35, 69, 103)))
                             }
                         );
-                        let actual =
-                            Stylesheet::read_border_region(&mut xml, QName(b"bottom")).unwrap();
                         assert_eq!(
-                            actual,
+                            border.bottom,
                             BorderRegion {
                                 style: Some(BorderStyle::Dashed),
                                 color: Some(Color::Theme {
@@ -2034,42 +2041,36 @@ mod stylesheet_unittests {
                                 })
                             }
                         );
-                        // let actual =
-                        //     Stylesheet::read_border_region(&mut xml, QName(b"vertical")).unwrap();
-                        // assert_eq!(
-                        //     actual,
-                        //     BorderRegion {
-                        //         style: Some(BorderStyle::Dashed),
-                        //         color: Some(Color::Theme {
-                        //             id: 2,
-                        //             tint: Some("0.78785898899".into())
-                        //         })
-                        //     }
-                        // );
-                        // let actual =
-                        //     Stylesheet::read_border_region(&mut xml, QName(b"horizontal")).unwrap();
-                        // assert_eq!(
-                        //     actual,
-                        //     BorderRegion {
-                        //         style: Some(BorderStyle::Dashed),
-                        //         color: Some(Color::Theme {
-                        //             id: 3,
-                        //             tint: Some("0.78785898899".into())
-                        //         })
-                        //     }
-                        // );
-                        // let actual =
-                        //     Stylesheet::read_border_region(&mut xml, QName(b"diagonal")).unwrap();
-                        // assert_eq!(
-                        //     actual,
-                        //     BorderRegion {
-                        //         style: Some(BorderStyle::Dashed),
-                        //         color: Some(Color::Theme {
-                        //             id: 4,
-                        //             tint: Some("0.78785898899".into())
-                        //         })
-                        //     }
-                        // );
+                        assert_eq!(
+                            border.vertical,
+                            BorderRegion {
+                                style: Some(BorderStyle::Dashed),
+                                color: Some(Color::Theme {
+                                    id: 2,
+                                    tint: Some("0.78785898899".into())
+                                })
+                            }
+                        );
+                        assert_eq!(
+                            border.horizontal,
+                            BorderRegion {
+                                style: Some(BorderStyle::Dashed),
+                                color: Some(Color::Theme {
+                                    id: 3,
+                                    tint: Some("0.78785898899".into())
+                                })
+                            }
+                        );
+                        assert_eq!(
+                            border.diagonal,
+                            BorderRegion {
+                                style: Some(BorderStyle::Dashed),
+                                color: Some(Color::Theme {
+                                    id: 4,
+                                    tint: Some("0.78785898899".into())
+                                })
+                            }
+                        );
                         break;
                     }
                     _ => (),
@@ -2082,9 +2083,9 @@ mod stylesheet_unittests {
             let xml_content = r#"
                 <root>
                     <border>
-                        <left style="double">
+                        <horizontal style="double">
                             <color rgb="FF234567" />
-                        </left
+                        </horizontal
                     </border>
                 </root>
                 "#;
@@ -2094,11 +2095,11 @@ mod stylesheet_unittests {
             loop {
                 match xml.read_event_into(&mut buf) {
                     Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"border" => {
-                        let actual = Stylesheet::read_border_region(&mut xml, QName(b"left"))
+                        let actual = Stylesheet::read_border(&mut xml, e.name())
                             .err()
                             .unwrap()
                             .to_string();
-                        assert_eq!(actual, "ill-formed document: expected `</left>`, but `</left\n                    </border>` was found".to_string());
+                        assert_eq!(actual, "ill-formed document: expected `</horizontal>`, but `</horizontal\n                    </border>` was found".to_string());
                         break;
                     }
                     _ => (),
@@ -2111,7 +2112,7 @@ mod stylesheet_unittests {
             let xml_content = r#"
                 <root>
                     <border>
-                    <left>
+                    <vertical>
                 "#;
             let mut xml = Reader::from_reader(Cursor::new(xml_content));
             let mut buf = Vec::with_capacity(1024);
@@ -2119,12 +2120,11 @@ mod stylesheet_unittests {
             loop {
                 match xml.read_event_into(&mut buf) {
                     Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"border" => {
-                        let actual = Stylesheet::read_border_region(&mut xml, QName(b"left"));
-                            // .err()
-                            // .unwrap()
-                            // .to_string();
-                        dbg!(actual);
-                        // assert_eq!(actual, "malformed stream for tag: left".to_string());
+                        let actual = Stylesheet::read_border(&mut xml, e.name())
+                            .err()
+                            .unwrap()
+                            .to_string();
+                        assert_eq!(actual, "malformed stream for tag: vertical".to_string());
                         break;
                     }
                     _ => (),
@@ -2344,7 +2344,10 @@ mod stylesheet_unittests {
             loop {
                 match xml.read_event_into(&mut buf) {
                     Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"fills" => {
-                        let actual = Stylesheet::read_fill(&mut xml).err().unwrap().to_string();
+                        let actual = Stylesheet::read_fill(&mut xml, e.name())
+                            .err()
+                            .unwrap()
+                            .to_string();
                         assert_eq!(actual, "ill-formed document: expected `</fill>`, but `</fill\n                    </fills>` was found".to_string());
                         break;
                     }
@@ -2366,8 +2369,11 @@ mod stylesheet_unittests {
             loop {
                 match xml.read_event_into(&mut buf) {
                     Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"fills" => {
-                        let actual = Stylesheet::read_fill(&mut xml).err().unwrap().to_string();
-                        assert_eq!(actual, "malformed stream for tag: fill".to_string());
+                        let actual = Stylesheet::read_fill(&mut xml, e.name())
+                            .err()
+                            .unwrap()
+                            .to_string();
+                        assert_eq!(actual, "malformed stream for tag: fills".to_string());
                         break;
                     }
                     _ => (),
@@ -2392,7 +2398,7 @@ mod stylesheet_unittests {
             loop {
                 match xml.read_event_into(&mut buf) {
                     Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"fill" => {
-                        let actual = Stylesheet::read_fill(&mut xml).unwrap();
+                        let actual = Stylesheet::read_fill(&mut xml, e.name()).unwrap();
                         assert_eq!(
                             actual,
                             Fill {
@@ -2426,7 +2432,7 @@ mod stylesheet_unittests {
             loop {
                 match xml.read_event_into(&mut buf) {
                     Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"fill" => {
-                        let actual = Stylesheet::read_fill(&mut xml).unwrap();
+                        let actual = Stylesheet::read_fill(&mut xml, e.name()).unwrap();
                         assert_eq!(
                             actual,
                             Fill {
@@ -2463,7 +2469,7 @@ mod stylesheet_unittests {
             loop {
                 match xml.read_event_into(&mut buf) {
                     Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"fill" => {
-                        let actual = Stylesheet::read_fill(&mut xml).unwrap();
+                        let actual = Stylesheet::read_fill(&mut xml, e.name()).unwrap();
                         assert_eq!(
                             actual,
                             Fill {
