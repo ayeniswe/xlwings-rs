@@ -1,63 +1,26 @@
 //! The module holds all logic to fully deserialize the sharedStrings.xml in the .xlsx file
-use crate::{errors::XcelmateError, stream::utils::xml_reader};
+use crate::{
+    errors::XcelmateError,
+    stream::utils::{xml_reader, Key, Save, XmlWriter},
+};
+use bimap::BiBTreeMap;
 use quick_xml::{
-    events::{attributes::Attribute, Event},
+    events::{attributes::Attribute, BytesDecl, BytesText, Event},
     name::QName,
-    Reader,
+    Reader, Writer,
 };
 use std::{
     borrow::Cow,
-    collections::HashMap,
-    io::{BufReader, Read, Seek},
+    io::{BufRead, Read, Seek, Write},
     sync::Arc,
 };
-use zip::{read::ZipFile, ZipArchive};
+use zip::{
+    write::{FileOptionExtension, FileOptions},
+    ZipArchive,
+};
+use super::{stylesheet::FontProperty, Stylesheet};
 
-type Key = usize;
 type SharedStringRef = Arc<SharedString>;
-
-/// The `Rgb` promotes better api usage with hexadecimal coloring
-#[derive(Debug, PartialEq, Clone, Eq, PartialOrd, Hash, Ord)]
-enum Rgb {
-    Custom((u8, u8, u8)),
-}
-
-/// The `Color` denotes the type of coloring system to
-/// use since excel has builtin coloring to choose that will map to `theme` but
-/// for custom specfic coloring `rgb` is used
-///
-/// Default is `Theme((1, None))` = black
-#[derive(Debug, PartialEq, Clone, Eq, PartialOrd, Hash, Ord)]
-enum Color {
-    /// Builtin theme from excel color palette selector which includes theme id and tint value
-    Theme { id: u32, tint: Option<String> },
-    /// RGB color model
-    Rgb(Rgb),
-}
-impl Default for Color {
-    fn default() -> Self {
-        Color::Theme { id: 1, tint: None }
-    }
-}
-
-/// The `RichTextProperty` denotes all styling options
-/// that can be added to text
-#[derive(Debug, Default, Clone, PartialEq, Eq, PartialOrd, Hash, Ord)]
-struct RichTextProperty {
-    bold: bool,
-    underline: bool,
-    /// Double underline
-    double: bool,
-    italic: bool,
-    size: String,
-    color: Color,
-    /// Font type
-    font: String,
-    /// Font family
-    family: u32,
-    /// Font scheme
-    scheme: String,
-}
 
 /// The `StringType` allows to differentiate between some strings that could
 /// have leading and trailing spaces
@@ -68,23 +31,85 @@ enum StringType {
     // Normal string with no leading or trailing spaces
     NoPreserve(String),
 }
+impl<W: Write> XmlWriter<W> for StringType {
+    fn write_xml<'a>(
+        &self,
+        writer: &'a mut Writer<W>,
+        tag_name: &str,
+    ) -> Result<&'a mut Writer<W>, XcelmateError> {
+        match self {
+            StringType::Preserve(s) => writer
+                .create_element(tag_name)
+                .with_attribute(("xml:space", "preserve"))
+                .write_text_content(BytesText::new(s))?,
+            StringType::NoPreserve(s) => writer
+                .create_element(tag_name)
+                .write_text_content(BytesText::new(s))?,
+        };
+        Ok(writer)
+    }
+}
 
 /// The `SharedString` represents either a rich text or plaintext string and needs
 /// to track ref counts to handle removal.
 #[derive(Debug, PartialEq, Eq, Clone, PartialOrd, Hash, Ord)]
-enum SharedString {
+pub(crate) enum SharedString {
     RichText(Vec<StringPiece>),
     PlainText(StringType),
 }
-
+impl<W: Write> XmlWriter<W> for SharedString {
+    fn write_xml<'a>(
+        &self,
+        writer: &'a mut Writer<W>,
+        tag_name: &'a str,
+    ) -> Result<&'a mut Writer<W>, XcelmateError> {
+        let writer = writer.create_element(tag_name);
+        match self {
+            SharedString::RichText(pieces) => {
+                Ok(writer.write_inner_content::<_, XcelmateError>(|writer| {
+                    // <r>
+                    for piece in pieces {
+                        writer
+                            .create_element("r")
+                            .write_inner_content::<_, XcelmateError>(|writer| {
+                                piece.write_xml(writer, "rPr")?;
+                                Ok(())
+                            })?;
+                    }
+                    Ok(())
+                })?)
+            }
+            SharedString::PlainText(st) => {
+                // <t>
+                Ok(writer.write_inner_content::<_, XcelmateError>(|writer| {
+                    st.write_xml(writer, "t")?;
+                    Ok(())
+                })?)
+            }
+        }
+    }
+}
 /// The `StringPiece` represents a string that is contained in a richtext denoted by having a `SharedString::RichText`.
 /// The pieces of text can be with styling or no styling
 #[derive(Debug, PartialEq, Clone, Eq, PartialOrd, Hash, Ord)]
 struct StringPiece {
     /// The styling applied to text
-    props: Option<RichTextProperty>,
+    props: Option<FontProperty>,
     // The actual raw value of text
     value: StringType,
+}
+impl<W: Write> XmlWriter<W> for StringPiece {
+    fn write_xml<'a>(
+        &self,
+        writer: &'a mut Writer<W>,
+        tag_name: &str,
+    ) -> Result<&'a mut Writer<W>, XcelmateError> {
+        if let Some(props) = &self.props {
+            props.write_xml(writer, tag_name)?;
+        }
+        self.value.write_xml(writer, "t")?;
+        Ok(writer)
+    }
 }
 
 /// The `SharedStringTable` provides an efficient way to map strings
@@ -94,11 +119,40 @@ struct StringPiece {
 /// **Note**: rich text will always have atleast greater than one `StringItem` and plain text will only have a single `StringItem`
 #[derive(Default)]
 pub(crate) struct SharedStringTable {
-    table: HashMap<SharedStringRef, Key>,
-    reverse_table: HashMap<Key, SharedStringRef>,
+    table: BiBTreeMap<SharedStringRef, Key>,
     count: u32,
 }
-
+impl<W: Write> XmlWriter<W> for SharedStringTable {
+    fn write_xml<'a>(
+        &self,
+        writer: &'a mut Writer<W>,
+        tag_name: &str,
+    ) -> Result<&'a mut Writer<W>, XcelmateError> {
+        writer.write_event(Event::Decl(BytesDecl::new(
+            "1.0",
+            Some("UTF-8"),
+            Some("yes"),
+        )))?;
+        writer
+            .create_element(tag_name)
+            .with_attributes(vec![
+                (
+                    "xmlns",
+                    "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
+                ),
+                ("count", self.count.to_string().as_str()),
+                ("uniqueCount", self.table.len().to_string().as_str()),
+            ])
+            .write_inner_content::<_, XcelmateError>(|writer| {
+                // <si>
+                for (si, _) in self.table.right_range(0..self.table.len()) {
+                    si.write_xml(writer, "si")?;
+                }
+                Ok(())
+            })?;
+        Ok(writer)
+    }
+}
 impl SharedStringTable {
     // Ported from calamine https://github.com/tafia/calamine/tree/master
     pub(crate) fn read_shared_strings<'a, RS: Read + Seek>(
@@ -110,7 +164,7 @@ impl SharedStringTable {
             Some(x) => x?,
         };
         let mut buf = Vec::with_capacity(1024);
-        let mut idx = 0; // Track index for referencing updates, etc
+        let mut idx: usize = 0; // Track index for referencing updates, etc
         loop {
             buf.clear();
             match xml.read_event_into(&mut buf) {
@@ -119,7 +173,7 @@ impl SharedStringTable {
                         if let Ok(a) = attr {
                             match a.key {
                                 QName(b"count") => {
-                                    self.count = a.unescape_value()?.to_string().parse::<u32>()?
+                                    self.count = a.unescape_value()?.parse::<u32>()?
                                 }
                                 // We dont care about unique count since that will be the len() of the table in SharedStringTable
                                 _ => (),
@@ -130,7 +184,6 @@ impl SharedStringTable {
                 Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"si" => {
                     if let Some(s) = SharedStringTable::read_string(&mut xml, e.name())? {
                         let text = Arc::new(s);
-                        self.reverse_table.insert(idx, text.clone());
                         self.table.insert(text, idx);
                         idx += 1;
                     }
@@ -146,15 +199,15 @@ impl SharedStringTable {
 
     // Ported from calamine https://github.com/tafia/calamine/tree/master
     /// Read either a simple or richtext string
-    fn read_string(
-        xml: &mut Reader<BufReader<ZipFile>>,
+    fn read_string<B: BufRead>(
+        xml: &mut Reader<B>,
         QName(closing): QName,
     ) -> Result<Option<SharedString>, XcelmateError> {
         let mut buf = Vec::with_capacity(1024);
         let mut val_buf = Vec::with_capacity(1024);
         let mut rich_buffer: Option<SharedString> = None;
         let mut is_phonetic_text = false;
-        let mut props: Option<RichTextProperty> = None;
+        let mut props: Option<FontProperty> = None;
         let mut preserve = false;
         loop {
             buf.clear();
@@ -166,130 +219,10 @@ impl SharedStringTable {
                     }
                 }
                 Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"rPr" => {
-                    if props.is_none() {
-                        props = Some(RichTextProperty::default());
-                    }
+                    props = Some(Stylesheet::read_font(xml, e.name())?);
                 }
                 Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"rPh" => {
                     is_phonetic_text = true;
-                }
-                Ok(Event::Empty(ref e)) if e.local_name().as_ref() == b"sz" => {
-                    if let Some(p) = props.as_mut() {
-                        for attr in e.attributes() {
-                            if let Ok(a) = attr {
-                                match a.key {
-                                    QName(b"val") => p.size = a.unescape_value()?.to_string(),
-                                    _ => (),
-                                }
-                            }
-                        }
-                    }
-                }
-                Ok(Event::Empty(ref e)) if e.local_name().as_ref() == b"color" => {
-                    if let Some(p) = props.as_mut() {
-                        for attr in e.attributes() {
-                            if let Ok(a) = attr {
-                                match a.key {
-                                    QName(b"rgb") => {
-                                        let val = a.unescape_value()?.to_string();
-                                        // The first two letter are ignored since they response to alpha
-                                        let base16 = 16u32;
-                                        let red = u8::from_str_radix(&val[2..4], base16)?;
-                                        let green = u8::from_str_radix(&val[4..6], base16)?;
-                                        let blue = u8::from_str_radix(&val[6..8], base16)?;
-                                        p.color = Color::Rgb(Rgb::Custom((red, green, blue)));
-                                    }
-                                    QName(b"theme") => {
-                                        p.color = Color::Theme {
-                                            id: a.unescape_value()?.to_string().parse::<u32>()?,
-                                            tint: None,
-                                        };
-                                    }
-                                    QName(b"tint") => match p.color {
-                                        Color::Theme { id, .. } => {
-                                            p.color = Color::Theme {
-                                                id,
-                                                tint: Some(a.unescape_value()?.to_string()),
-                                            }
-                                        }
-                                        _ => (),
-                                    },
-                                    _ => (),
-                                }
-                            }
-                        }
-                    }
-                }
-                Ok(Event::Empty(ref e)) if e.local_name().as_ref() == b"rFont" => {
-                    if let Some(p) = props.as_mut() {
-                        for attr in e.attributes() {
-                            if let Ok(a) = attr {
-                                match a.key {
-                                    QName(b"val") => p.font = a.unescape_value()?.to_string(),
-                                    _ => (),
-                                }
-                            }
-                        }
-                    }
-                }
-                Ok(Event::Empty(ref e)) if e.local_name().as_ref() == b"family" => {
-                    if let Some(p) = props.as_mut() {
-                        for attr in e.attributes() {
-                            if let Ok(a) = attr {
-                                match a.key {
-                                    QName(b"val") => {
-                                        p.family = a.unescape_value()?.parse::<u32>()?
-                                    }
-                                    _ => (),
-                                }
-                            }
-                        }
-                    }
-                }
-                Ok(Event::Empty(ref e)) if e.local_name().as_ref() == b"scheme" => {
-                    if let Some(p) = props.as_mut() {
-                        for attr in e.attributes() {
-                            if let Ok(a) = attr {
-                                match a.key {
-                                    QName(b"val") => p.scheme = a.unescape_value()?.to_string(),
-                                    _ => (),
-                                }
-                            }
-                        }
-                    }
-                }
-                Ok(Event::Empty(ref e)) if e.local_name().as_ref() == b"b" => {
-                    if let Some(p) = props.as_mut() {
-                        p.bold = true
-                    }
-                }
-                Ok(Event::Empty(ref e)) if e.local_name().as_ref() == b"i" => {
-                    if let Some(p) = props.as_mut() {
-                        p.italic = true
-                    }
-                }
-                Ok(Event::Empty(ref e)) if e.local_name().as_ref() == b"u" => {
-                    if let Some(p) = props.as_mut() {
-                        p.underline = true;
-                        for attr in e.attributes() {
-                            if let Ok(a) = attr {
-                                match a.key {
-                                    QName(b"val") => {
-                                        p.double = true;
-                                        // No longer can be true if doubled
-                                        p.underline = false;
-                                    }
-                                    _ => (),
-                                }
-                            }
-                        }
-                    }
-                }
-                Ok(Event::End(ref e)) if e.local_name().as_ref() == closing => {
-                    return Ok(rich_buffer);
-                }
-                Ok(Event::End(ref e)) if e.local_name().as_ref() == b"rPh" => {
-                    is_phonetic_text = false;
                 }
                 Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"t" && !is_phonetic_text => {
                     val_buf.clear();
@@ -347,6 +280,12 @@ impl SharedStringTable {
                         }
                     }
                 }
+                Ok(Event::End(ref e)) if e.local_name().as_ref() == closing => {
+                    return Ok(rich_buffer);
+                }
+                Ok(Event::End(ref e)) if e.local_name().as_ref() == b"rPh" => {
+                    is_phonetic_text = false;
+                }
                 Ok(Event::Eof) => return Err(XcelmateError::XmlEof("".into())),
                 Err(e) => return Err(XcelmateError::Xml(e)),
                 _ => (),
@@ -379,17 +318,17 @@ impl SharedStringTable {
     /// Get the shared string ref
     pub(crate) fn shared_string_ref(&mut self, item: SharedString) -> Option<SharedStringRef> {
         self.increment_count();
-        if let Some(i) = self.table.get(&item) {
-            Some(self.reverse_table.get(i).unwrap().clone())
+        if let Some(i) = self.table.get_by_left(&item) {
+            Some(self.table.get_by_right(i).unwrap().clone())
         } else {
             None
         }
     }
 
-    /// Get the shared string from key
+    /// Get the shared string ref from key
     pub(crate) fn get_shared_string_ref_from_key(&mut self, key: Key) -> Option<SharedStringRef> {
         self.count += 1;
-        if let Some(i) = self.reverse_table.get(&key) {
+        if let Some(i) = self.table.get_by_right(&key) {
             Some(i.clone())
         } else {
             None
@@ -401,31 +340,30 @@ impl SharedStringTable {
         self.increment_count();
         let int_ref = self.unique_count();
         let item = Arc::new(item);
-        self.reverse_table.insert(int_ref, item.clone());
         self.table.insert(item.clone(), int_ref);
         item
     }
 
     /// As every string is removed, the shared table must reflect the changes in count.
-    /// Shared strings can ONLY be removed when `ref_count` is `0`
+    /// Shared strings can ONLY be removed when smart pointer count is `2`. The pointer will always have atleast `2` counts since
+    /// at load time we keep a pointer in two hashmaps to support bidirectional access
     ///
     /// # Returns
-    /// The new `ref_count` or `None` if already has been removed.
-    /// A `ref_count` of `Some(0)` denotes the entry has just been removed
+    /// The new smart pointer count or `None` if already has been removed.
+    /// A return value of `Some(0)` indicates the entry has been removed from both tables
     pub(crate) fn remove_from_table(&mut self, item: SharedString) -> Option<usize> {
         self.decrement_count();
-        if let Some(key) = self.table.get(&item) {
-            let shared_string_ref = self.reverse_table.get(key).unwrap();
+        if let Some(key) = self.table.get_by_left(&item) {
+            let shared_string_ref = self.table.get_by_right(key).unwrap();
             let count = Arc::strong_count(shared_string_ref);
 
-            // 2 count since both hashmaps hold ref to shared string
-            const TABLE_COUNT: usize = 2;
-            if count == TABLE_COUNT {
-                let int_ref = self.table.remove(&item).unwrap();
-                self.reverse_table.remove(&int_ref);
+            // We should only remove when no one reference it no longer
+            // the 1 means the table only has a reference
+            if count == 1 {
+                self.table.remove_by_left(&item).unwrap();
                 Some(0)
             } else {
-                Some(count - TABLE_COUNT)
+                Some(count - 1)
             }
         } else {
             None
@@ -433,452 +371,431 @@ impl SharedStringTable {
     }
 }
 
+impl<W: Write + Seek, EX: FileOptionExtension> Save<W, EX> for SharedStringTable {
+    fn save(
+        &mut self,
+        writer: &mut zip::ZipWriter<W>,
+        options: FileOptions<EX>,
+    ) -> Result<(), XcelmateError> {
+        writer.start_file("xl/sharedStrings.xml", options)?;
+        self.write_xml(&mut Writer::new(writer), "sst")?;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
-mod shared_string_api {
-    use crate::stream::xlsx::{
-        shared_string_table::{
-            Color, Rgb, RichTextProperty, SharedString, SharedStringTable, StringPiece, StringType,
-        },
-        Xlsx,
-    };
-    use std::{fs::File, sync::Arc};
-    use zip::ZipArchive;
+mod shared_string_unittests {
 
-    fn init(path: &str) -> SharedStringTable {
-        let file = File::open(path).unwrap();
-        let mut zip = ZipArchive::new(file).unwrap();
-        let mut sst = SharedStringTable::default();
-        sst.read_shared_strings(&mut zip).unwrap();
-        sst
-    }
+    mod shared_string_api {
+        use crate::stream::{
+            utils::Save,
+            xlsx::{
+                shared_string_table::{
+                    FontProperty, SharedString, SharedStringTable, StringPiece, StringType,
+                },
+                stylesheet::{Color, FormatState, Rgb},
+            },
+        };
+        use std::{fs::File, io::Cursor, sync::Arc};
+        use zip::{write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
 
-    #[test]
-    fn query_richtext_match() {
-        let mut sst = init("tests/workbook01.xlsx");
-        let pieces = vec![
-            StringPiece {
-                props: None,
-                value: StringType::Preserve("The ".into()),
-            },
-            StringPiece {
-                props: Some(RichTextProperty {
-                    bold: true,
-                    underline: true,
-                    double: false,
-                    italic: true,
-                    size: "11".into(),
-                    color: Color::Theme { id: 1, tint: None },
-                    font: "Calibri".into(),
-                    family: 2,
-                    scheme: "minor".into(),
-                }),
-                value: StringType::NoPreserve("big".into()),
-            },
-            StringPiece {
-                props: Some(RichTextProperty {
-                    bold: true,
-                    underline: false,
-                    double: false,
-                    italic: false,
-                    size: "11".into(),
-                    color: Color::Theme { id: 1, tint: None },
-                    font: "Calibri".into(),
-                    family: 2,
-                    scheme: "minor".into(),
-                }),
-                value: StringType::Preserve(" example".into()),
-            },
-            StringPiece {
-                props: Some(RichTextProperty {
-                    bold: false,
-                    underline: false,
-                    double: false,
-                    italic: false,
-                    size: "11".into(),
-                    color: Color::Theme { id: 1, tint: None },
-                    font: "Calibri".into(),
-                    family: 2,
-                    scheme: "minor".into(),
-                }),
-                value: StringType::Preserve(" ".into()),
-            },
-            StringPiece {
-                props: Some(RichTextProperty {
-                    bold: false,
-                    underline: false,
-                    double: false,
-                    italic: true,
-                    size: "11".into(),
-                    color: Color::Theme { id: 1, tint: None },
-                    font: "Calibri".into(),
-                    family: 2,
-                    scheme: "minor".into(),
-                }),
-                value: StringType::Preserve("of ".into()),
-            },
-            StringPiece {
-                props: Some(RichTextProperty {
-                    bold: false,
-                    underline: true,
-                    double: false,
-                    italic: false,
-                    size: "11".into(),
-                    color: Color::Theme { id: 1, tint: None },
-                    font: "Calibri".into(),
-                    family: 2,
-                    scheme: "minor".into(),
-                }),
-                value: StringType::NoPreserve("some".into()),
-            },
-            StringPiece {
-                props: Some(RichTextProperty {
-                    bold: false,
-                    underline: false,
-                    double: false,
-                    italic: false,
-                    size: "11".into(),
-                    color: Color::Theme { id: 1, tint: None },
-                    font: "Calibri".into(),
-                    family: 2,
-                    scheme: "minor".into(),
-                }),
-                value: StringType::Preserve(" ".into()),
-            },
-            StringPiece {
-                props: Some(RichTextProperty {
-                    bold: false,
-                    underline: false,
-                    double: false,
-                    italic: false,
-                    size: "11".into(),
-                    color: Color::Theme {
-                        id: 5,
-                        tint: Some("0.39997558519241921".into()),
-                    },
-                    font: "Calibri".into(),
-                    family: 2,
-                    scheme: "minor".into(),
-                }),
-                value: StringType::NoPreserve("rich".into()),
-            },
-            StringPiece {
-                props: Some(RichTextProperty {
-                    bold: false,
-                    underline: false,
-                    double: false,
-                    italic: false,
-                    size: "11".into(),
-                    color: Color::Theme { id: 1, tint: None },
-                    font: "Calibri".into(),
-                    family: 2,
-                    scheme: "minor".into(),
-                }),
-                value: StringType::Preserve(" ".into()),
-            },
-            StringPiece {
-                props: Some(RichTextProperty {
-                    bold: false,
-                    underline: false,
-                    double: true,
-                    italic: false,
-                    size: "11".into(),
-                    color: Color::Theme { id: 1, tint: None },
-                    font: "Calibri".into(),
-                    family: 2,
-                    scheme: "minor".into(),
-                }),
-                value: StringType::NoPreserve("text".into()),
-            },
-            StringPiece {
-                props: Some(RichTextProperty {
-                    bold: false,
-                    underline: false,
-                    double: false,
-                    italic: false,
-                    size: "11".into(),
-                    color: Color::Theme { id: 1, tint: None },
-                    font: "Calibri".into(),
-                    family: 2,
-                    scheme: "minor".into(),
-                }),
-                value: StringType::Preserve(" ".into()),
-            },
-            StringPiece {
-                props: Some(RichTextProperty {
-                    bold: false,
-                    underline: false,
-                    double: false,
-                    italic: false,
-                    size: "11".into(),
-                    color: Color::Rgb(Rgb::Custom((186, 155, 203))),
-                    font: "Calibri".into(),
-                    family: 2,
-                    scheme: "minor".into(),
-                }),
-                value: StringType::NoPreserve("here".into()),
-            },
-        ];
-        // Item should already exist
-        let actual = sst
-            .shared_string_ref(SharedString::RichText(pieces.clone()))
-            .unwrap();
-        assert_eq!(Arc::strong_count(&actual), 3);
-    }
+        fn init(path: &str) -> SharedStringTable {
+            let file = File::open(path).unwrap();
+            let mut zip = ZipArchive::new(file).unwrap();
+            let mut sst = SharedStringTable::default();
+            sst.read_shared_strings(&mut zip).unwrap();
+            sst
+        }
 
-    #[test]
-    fn query_richtext_no_match() {
-        let mut sst = init("tests/workbook01.xlsx");
-        let pieces = vec![
-            StringPiece {
-                props: None,
-                value: StringType::Preserve("The ".into()),
-            },
-            StringPiece {
-                props: Some(RichTextProperty {
-                    bold: true,
-                    underline: true,
-                    double: false,
-                    italic: true,
-                    size: "11".into(),
-                    color: Color::Theme { id: 1, tint: None },
-                    font: "Calibri".into(),
-                    family: 2,
-                    scheme: "minor".into(),
-                }),
-                value: StringType::NoPreserve("big".into()),
-            },
-            StringPiece {
-                props: Some(RichTextProperty {
-                    bold: true,
-                    underline: false,
-                    double: false,
-                    italic: false,
-                    size: "11".into(),
-                    color: Color::Theme { id: 1, tint: None },
-                    font: "Calibri".into(),
-                    family: 2,
-                    scheme: "minor".into(),
-                }),
-                value: StringType::Preserve(" example".into()),
-            },
-            StringPiece {
-                props: Some(RichTextProperty {
-                    bold: false,
-                    underline: false,
-                    double: false,
-                    italic: false,
-                    size: "11".into(),
-                    color: Color::Theme { id: 1, tint: None },
-                    font: "Calibri".into(),
-                    family: 2,
-                    scheme: "minor".into(),
-                }),
-                value: StringType::Preserve(" ".into()),
-            },
-            StringPiece {
-                props: Some(RichTextProperty {
-                    bold: false,
-                    underline: false,
-                    double: false,
-                    italic: true,
-                    size: "11".into(),
-                    color: Color::Theme { id: 1, tint: None },
-                    font: "Calibri".into(),
-                    family: 2,
-                    scheme: "minor".into(),
-                }),
-                value: StringType::Preserve("of ".into()),
-            },
-            StringPiece {
-                props: Some(RichTextProperty {
-                    bold: false,
-                    underline: true,
-                    double: false,
-                    italic: false,
-                    size: "11".into(),
-                    color: Color::Theme { id: 1, tint: None },
-                    font: "Calibri".into(),
-                    family: 2,
-                    scheme: "minor".into(),
-                }),
-                value: StringType::NoPreserve("some".into()),
-            },
-            StringPiece {
-                props: Some(RichTextProperty {
-                    bold: false,
-                    underline: false,
-                    double: false,
-                    italic: false,
-                    size: "11".into(),
-                    color: Color::Theme { id: 1, tint: None },
-                    font: "Calibri".into(),
-                    family: 2,
-                    scheme: "minor".into(),
-                }),
-                value: StringType::Preserve(" ".into()),
-            },
-            StringPiece {
-                props: Some(RichTextProperty {
-                    bold: false,
-                    underline: false,
-                    double: false,
-                    italic: false,
-                    size: "11".into(),
-                    color: Color::Theme {
-                        id: 5,
-                        tint: Some("0.39997558519241921".into()),
-                    },
-                    font: "Calibri".into(),
-                    family: 2,
-                    scheme: "minor".into(),
-                }),
-                value: StringType::NoPreserve("rich".into()),
-            },
-            StringPiece {
-                props: Some(RichTextProperty {
-                    bold: false,
-                    underline: false,
-                    double: false,
-                    italic: false,
-                    size: "11".into(),
-                    color: Color::Theme { id: 1, tint: None },
-                    font: "Calibri".into(),
-                    family: 2,
-                    scheme: "minor".into(),
-                }),
-                value: StringType::Preserve(" ".into()),
-            },
-            StringPiece {
-                props: Some(RichTextProperty {
-                    bold: false,
-                    underline: false,
-                    double: true,
-                    italic: false,
-                    size: "11".into(),
-                    color: Color::Theme { id: 1, tint: None },
-                    font: "Calibri".into(),
-                    family: 2,
-                    scheme: "minor".into(),
-                }),
-                value: StringType::NoPreserve("text".into()),
-            },
-            StringPiece {
-                props: Some(RichTextProperty {
-                    bold: false,
-                    underline: false,
-                    double: false,
-                    italic: false,
-                    size: "11".into(),
-                    color: Color::Theme { id: 1, tint: None },
-                    font: "Calibri".into(),
-                    family: 2,
-                    scheme: "minor".into(),
-                }),
-                value: StringType::Preserve(" ".into()),
-            },
-            StringPiece {
-                props: Some(RichTextProperty {
-                    bold: false,
-                    underline: false,
-                    double: false,
-                    italic: false,
-                    size: "11".into(),
-                    color: Color::Rgb(Rgb::Custom((186, 155, 203))),
-                    font: "Calibrri".into(),
-                    family: 2,
-                    scheme: "minor".into(),
-                }),
-                value: StringType::NoPreserve("here".into()),
-            },
-        ];
-
-        // Item should not exist
-        let actual = sst.shared_string_ref(SharedString::RichText(pieces.clone()));
-        assert_eq!(actual, None);
-    }
-
-    #[test]
-    fn query_plaintext_no_match() {
-        let mut sst = init("tests/workbook01.xlsx");
-
-        // Item should not exist
-        let actual =
-            sst.shared_string_ref(SharedString::PlainText(StringType::Preserve("The".into())));
-        assert_eq!(actual, None);
-    }
-
-    #[test]
-    fn query_plaintext_match() {
-        let mut sst = init("tests/workbook02.xlsx");
-
-        // Item should exist
-        let actual = sst
-            .shared_string_ref(SharedString::PlainText(StringType::Preserve("The ".into())))
-            .unwrap();
-        assert_eq!(Arc::strong_count(&actual), 3);
-    }
-
-    #[test]
-    fn table_count_is_deserialized() {
-        let sst = init("tests/workbook02.xlsx");
-
-        // Count should increment
-        let actual = sst.count();
-        assert_eq!(actual, 1);
-    }
-
-    #[test]
-    fn add_new_shared_string_to_table() {
-        let mut sst = init("tests/workbook02.xlsx");
-        let item = SharedString::PlainText(StringType::NoPreserve("The".into()));
-
-        // Should add a new item
-        let actual = sst.add_to_table(item);
-        assert_eq!(Arc::strong_count(&actual), 3);
-
-        // Total count should be incremented
-        let actual = sst.count();
-        assert_eq!(actual, 2);
-    }
-
-    #[test]
-    fn remove_shared_string_from_table() {
-        let mut sst = init("tests/workbook02.xlsx");
-        let item = SharedString::PlainText(StringType::Preserve("The ".into()));
-
-        // Should give zero ref count since removed
-        let actual = sst.remove_from_table(item.clone());
-        assert_eq!(actual, Some(0));
-
-        // Total count should be empty
-        let actual = sst.count();
-        assert_eq!(actual, 0);
-
-        // Should no longer exist
-        let actual = sst.remove_from_table(item);
-        assert_eq!(actual, None);
-    }
-
-    #[test]
-    fn do_not_remove_shared_string_from_table_when_ref_exists() {
-        let mut sst = init("tests/workbook02.xlsx");
-        let item = SharedString::PlainText(StringType::Preserve("The ".into()));
-
-        {
-            // Should show one ref exists still
-            let shared_string_ref = sst
-                .get_shared_string_ref_from_key(0)
+        #[test]
+        fn get_richtext_match() {
+            let mut sst = init("tests/workbook01.xlsx");
+            let pieces = vec![
+                StringPiece {
+                    props: None,
+                    value: StringType::Preserve("The ".into()),
+                },
+                StringPiece {
+                    props: Some(FontProperty {
+                        bold: FormatState::Enabled,
+                        underline: FormatState::Enabled,
+                        italic: FormatState::Enabled,
+                        size: "11".into(),
+                        color: Color::Theme { id: 1, tint: None },
+                        font: "Calibri".into(),
+                        family: 2,
+                        scheme: "minor".into(),
+                        ..Default::default()
+                    }),
+                    value: StringType::NoPreserve("big".into()),
+                },
+                StringPiece {
+                    props: Some(FontProperty {
+                        bold: FormatState::Enabled,
+                        size: "11".into(),
+                        color: Color::Theme { id: 1, tint: None },
+                        font: "Calibri".into(),
+                        family: 2,
+                        scheme: "minor".into(),
+                        ..Default::default()
+                    }),
+                    value: StringType::Preserve(" example".into()),
+                },
+                StringPiece {
+                    props: Some(FontProperty {
+                        size: "11".into(),
+                        color: Color::Theme { id: 1, tint: None },
+                        font: "Calibri".into(),
+                        family: 2,
+                        scheme: "minor".into(),
+                        ..Default::default()
+                    }),
+                    value: StringType::Preserve(" ".into()),
+                },
+                StringPiece {
+                    props: Some(FontProperty {
+                        italic: FormatState::Enabled,
+                        size: "11".into(),
+                        color: Color::Theme { id: 1, tint: None },
+                        font: "Calibri".into(),
+                        family: 2,
+                        scheme: "minor".into(),
+                        ..Default::default()
+                    }),
+                    value: StringType::Preserve("of ".into()),
+                },
+                StringPiece {
+                    props: Some(FontProperty {
+                        underline: FormatState::Enabled,
+                        size: "11".into(),
+                        color: Color::Theme { id: 1, tint: None },
+                        font: "Calibri".into(),
+                        family: 2,
+                        scheme: "minor".into(),
+                        ..Default::default()
+                    }),
+                    value: StringType::NoPreserve("some".into()),
+                },
+                StringPiece {
+                    props: Some(FontProperty {
+                        size: "11".into(),
+                        color: Color::Theme { id: 1, tint: None },
+                        font: "Calibri".into(),
+                        family: 2,
+                        scheme: "minor".into(),
+                        ..Default::default()
+                    }),
+                    value: StringType::Preserve(" ".into()),
+                },
+                StringPiece {
+                    props: Some(FontProperty {
+                        size: "11".into(),
+                        color: Color::Theme {
+                            id: 5,
+                            tint: Some("0.39997558519241921".into()),
+                        },
+                        font: "Calibri".into(),
+                        family: 2,
+                        scheme: "minor".into(),
+                        ..Default::default()
+                    }),
+                    value: StringType::NoPreserve("rich".into()),
+                },
+                StringPiece {
+                    props: Some(FontProperty {
+                        size: "11".into(),
+                        color: Color::Theme { id: 1, tint: None },
+                        font: "Calibri".into(),
+                        family: 2,
+                        scheme: "minor".into(),
+                        ..Default::default()
+                    }),
+                    value: StringType::Preserve(" ".into()),
+                },
+                StringPiece {
+                    props: Some(FontProperty {
+                        double: FormatState::Enabled,
+                        size: "11".into(),
+                        color: Color::Theme { id: 1, tint: None },
+                        font: "Calibri".into(),
+                        family: 2,
+                        scheme: "minor".into(),
+                        ..Default::default()
+                    }),
+                    value: StringType::NoPreserve("text".into()),
+                },
+                StringPiece {
+                    props: Some(FontProperty {
+                        size: "11".into(),
+                        color: Color::Theme { id: 1, tint: None },
+                        font: "Calibri".into(),
+                        family: 2,
+                        scheme: "minor".into(),
+                        ..Default::default()
+                    }),
+                    value: StringType::Preserve(" ".into()),
+                },
+                StringPiece {
+                    props: Some(FontProperty {
+                        size: "11".into(),
+                        color: Color::Rgb(Rgb::Custom(186, 155, 203)),
+                        font: "Calibri".into(),
+                        family: 2,
+                        scheme: "minor".into(),
+                        ..Default::default()
+                    }),
+                    value: StringType::NoPreserve("here".into()),
+                },
+            ];
+            // Item should already exist
+            let actual = sst
+                .shared_string_ref(SharedString::RichText(pieces.clone()))
                 .unwrap();
-            let actual = sst.remove_from_table(item.clone());
-            assert_eq!(actual, Some(1));
+            assert_eq!(Arc::strong_count(&actual), 2);
+        }
 
-            // Total count should not empty
+        #[test]
+        fn get_richtext_no_match() {
+            let mut sst = init("tests/workbook01.xlsx");
+            let pieces = vec![
+                StringPiece {
+                    props: None,
+                    value: StringType::Preserve("The ".into()),
+                },
+                StringPiece {
+                    props: Some(FontProperty {
+                        bold: FormatState::Enabled,
+                        underline: FormatState::Enabled,
+
+                        italic: FormatState::Enabled,
+                        size: "11".into(),
+                        color: Color::Theme { id: 1, tint: None },
+                        font: "Calibri".into(),
+                        family: 2,
+                        scheme: "minor".into(),
+                        ..Default::default()
+                    }),
+                    value: StringType::NoPreserve("big".into()),
+                },
+                StringPiece {
+                    props: Some(FontProperty {
+                        bold: FormatState::Enabled,
+                        size: "11".into(),
+                        color: Color::Theme { id: 1, tint: None },
+                        font: "Calibri".into(),
+                        family: 2,
+                        scheme: "minor".into(),
+                        ..Default::default()
+                    }),
+                    value: StringType::Preserve(" example".into()),
+                },
+                StringPiece {
+                    props: Some(FontProperty {
+                        size: "11".into(),
+                        color: Color::Theme { id: 1, tint: None },
+                        font: "Calibri".into(),
+                        family: 2,
+                        scheme: "minor".into(),
+                        ..Default::default()
+                    }),
+                    value: StringType::Preserve(" ".into()),
+                },
+                StringPiece {
+                    props: Some(FontProperty {
+                        italic: FormatState::Enabled,
+                        size: "11".into(),
+                        color: Color::Theme { id: 1, tint: None },
+                        font: "Calibri".into(),
+                        family: 2,
+                        scheme: "minor".into(),
+                        ..Default::default()
+                    }),
+                    value: StringType::Preserve("of ".into()),
+                },
+                StringPiece {
+                    props: Some(FontProperty {
+                        underline: FormatState::Enabled,
+                        size: "11".into(),
+                        color: Color::Theme { id: 1, tint: None },
+                        font: "Calibri".into(),
+                        family: 2,
+                        scheme: "minor".into(),
+                        ..Default::default()
+                    }),
+                    value: StringType::NoPreserve("some".into()),
+                },
+                StringPiece {
+                    props: Some(FontProperty {
+                        size: "11".into(),
+                        color: Color::Theme { id: 1, tint: None },
+                        font: "Calibri".into(),
+                        family: 2,
+                        scheme: "minor".into(),
+                        ..Default::default()
+                    }),
+                    value: StringType::Preserve(" ".into()),
+                },
+                StringPiece {
+                    props: Some(FontProperty {
+                        size: "11".into(),
+                        color: Color::Theme {
+                            id: 5,
+                            tint: Some("0.39997558519241921".into()),
+                        },
+                        font: "Calibri".into(),
+                        family: 2,
+                        scheme: "minor".into(),
+                        ..Default::default()
+                    }),
+                    value: StringType::NoPreserve("rich".into()),
+                },
+                StringPiece {
+                    props: Some(FontProperty {
+                        size: "11".into(),
+                        color: Color::Theme { id: 1, tint: None },
+                        font: "Calibri".into(),
+                        family: 2,
+                        scheme: "minor".into(),
+                        ..Default::default()
+                    }),
+                    value: StringType::Preserve(" ".into()),
+                },
+                StringPiece {
+                    props: Some(FontProperty {
+                        double: FormatState::Enabled,
+                        size: "11".into(),
+                        color: Color::Theme { id: 1, tint: None },
+                        font: "Calibri".into(),
+                        family: 2,
+                        scheme: "minor".into(),
+                        ..Default::default()
+                    }),
+                    value: StringType::NoPreserve("text".into()),
+                },
+                StringPiece {
+                    props: Some(FontProperty {
+                        size: "11".into(),
+                        color: Color::Theme { id: 1, tint: None },
+                        font: "Calibri".into(),
+                        family: 2,
+                        scheme: "minor".into(),
+                        ..Default::default()
+                    }),
+                    value: StringType::Preserve(" ".into()),
+                },
+                StringPiece {
+                    props: Some(FontProperty {
+                        size: "11".into(),
+                        color: Color::Rgb(Rgb::Custom(186, 155, 203)),
+                        font: "Calibrri".into(),
+                        family: 2,
+                        scheme: "minor".into(),
+                        ..Default::default()
+                    }),
+                    value: StringType::NoPreserve("here".into()),
+                },
+            ];
+
+            // Item should not exist
+            let actual = sst.shared_string_ref(SharedString::RichText(pieces.clone()));
+            assert_eq!(actual, None);
+        }
+
+        #[test]
+        fn get_plaintext_no_match() {
+            let mut sst = init("tests/workbook01.xlsx");
+
+            // Item should not exist
+            let actual =
+                sst.shared_string_ref(SharedString::PlainText(StringType::Preserve("The".into())));
+            assert_eq!(actual, None);
+        }
+
+        #[test]
+        fn get_plaintext_match() {
+            let mut sst = init("tests/workbook02.xlsx");
+
+            // Item should exist
+            let actual = sst
+                .shared_string_ref(SharedString::PlainText(StringType::Preserve("The ".into())))
+                .unwrap();
+            assert_eq!(Arc::strong_count(&actual), 2);
+        }
+
+        #[test]
+        fn table_count_is_deserialized() {
+            let sst = init("tests/workbook02.xlsx");
+
+            // Count should increment
             let actual = sst.count();
             assert_eq!(actual, 1);
         }
 
-        // Should no longer exist after drop
-        let actual = sst.remove_from_table(item);
-        assert_eq!(actual, Some(0));
+        #[test]
+        fn add_new_shared_string_to_table() {
+            let mut sst = init("tests/workbook02.xlsx");
+            let item = SharedString::PlainText(StringType::NoPreserve("The".into()));
+
+            // Should add a new item
+            let actual = sst.add_to_table(item);
+            assert_eq!(Arc::strong_count(&actual), 2);
+
+            // Total count should be incremented
+            let actual = sst.count();
+            assert_eq!(actual, 2);
+        }
+
+        #[test]
+        fn remove_shared_string_from_table() {
+            let mut sst = init("tests/workbook02.xlsx");
+            let item = SharedString::PlainText(StringType::Preserve("The ".into()));
+
+            // Should give zero ref count since removed
+            let actual = sst.remove_from_table(item.clone());
+            assert_eq!(actual, Some(0));
+
+            // Total count should be empty
+            let actual = sst.count();
+            assert_eq!(actual, 0);
+
+            // Should no longer exist
+            let actual = sst.remove_from_table(item);
+            assert_eq!(actual, None);
+        }
+
+        #[test]
+        fn do_not_remove_shared_string_from_table_when_ref_exists() {
+            let mut sst = init("tests/workbook02.xlsx");
+            let item = SharedString::PlainText(StringType::Preserve("The ".into()));
+
+            {
+                // Should show one ref exists still
+                let _shared_string_ref = sst.get_shared_string_ref_from_key(0).unwrap();
+                let actual = sst.remove_from_table(item.clone());
+                assert_eq!(actual, Some(1));
+
+                // Total count should not empty
+                let actual = sst.count();
+                assert_eq!(actual, 1);
+            }
+
+            // Should no longer exist after drop
+            let actual = sst.remove_from_table(item);
+            assert_eq!(actual, Some(0));
+        }
+
+        #[test]
+        fn save_file() {
+            let mut sst = init("tests/workbook01.xlsx");
+            let mut zip = ZipWriter::new(Cursor::new(Vec::<u8>::new()));
+            sst.save(
+                &mut zip,
+                SimpleFileOptions::default().compression_method(CompressionMethod::Deflated),
+            )
+            .unwrap();
+
+            // Verify all data is written
+            assert_eq!(zip.finish().unwrap().into_inner().len(), 479);
+        }
     }
 }

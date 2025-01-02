@@ -6,6 +6,15 @@ pub enum XcelmateError {
     #[error("styles.xml is missing")]
     StylesMissing,
 
+    /// A not specified enum variant. This can happen if we do not get
+    /// a full coverage of the possible variants that can exist when parsing strings
+    #[error("({0}) missing variant for: {1}")]
+    MissingVariant(String, String),
+
+    /// The `std::io` error wrapper
+    #[error(transparent)]
+    StdErr(#[from] std::io::Error),
+
     /// Stream reading has reached the end so more than likely enclosed tags are incorrect or missing
     #[error("malformed stream for tag: {0}")]
     XmlEof(String),
