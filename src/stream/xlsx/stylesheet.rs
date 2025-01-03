@@ -1425,7 +1425,7 @@ impl Stylesheet {
         item
     }
 
-    fn read_color(attributes: Attributes) -> Result<Color, XcelmateError>{
+    pub(crate) fn read_color(attributes: Attributes) -> Result<Color, XcelmateError>{
         ////////////////////
         // COLOR Attrs
         /////////////
