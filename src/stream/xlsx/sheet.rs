@@ -1,4 +1,8 @@
-use super::stylesheet::{Color, Stylesheet};
+use super::{
+    errors::XlsxError,
+    stylesheet::{Color, Stylesheet},
+    Xlsx,
+};
 use crate::{
     errors::XcelmateError,
     stream::utils::{xml_reader, Key, Save, XmlWriter},
@@ -122,6 +126,7 @@ pub(crate) enum GridlineColor {
 
 #[derive(Debug, PartialEq, Clone, Eq)]
 pub struct Sheet {
+    path: String,
     name: String,
     tab_color: Option<Color>,
     fit: bool,
@@ -147,6 +152,7 @@ pub struct Sheet {
 impl Default for Sheet {
     fn default() -> Self {
         Self {
+            path: Default::default(),
             show_grid: true,
             show_zero: true,
             show_outline_symbol: true,
@@ -172,14 +178,15 @@ impl Default for Sheet {
     }
 }
 impl Sheet {
-    fn new(name: &str) -> Self {
+    fn new(path: &str) -> Self {
         Self {
+            path: path.into(),
             show_grid: true,
             show_zero: true,
             show_outline_symbol: true,
             view: None,
             default_grid_color: GridlineColor::Automatic,
-            name: name.into(),
+            name: "".into(),
             tab_color: None,
             fit: false,
             dimensions: ((0, 0), (0, 0)),
@@ -200,10 +207,9 @@ impl Sheet {
     pub fn read_sheet<'a, RS: Read + Seek>(
         &mut self,
         zip: &'a mut ZipArchive<RS>,
-        sheet_path: &str,
-    ) -> Result<(), XcelmateError> {
-        let mut xml = match xml_reader(zip, sheet_path) {
-            None => return Err(XcelmateError::StylesMissing),
+    ) -> Result<(), XlsxError> {
+        let mut xml = match xml_reader(zip, &self.path) {
+            None => return Err(XlsxError::SheetNotFound(self.path.clone())),
             Some(x) => x?,
         };
         let mut buf = Vec::with_capacity(1024);
@@ -257,9 +263,8 @@ impl Sheet {
                                     // Split dimension range for top left cell and bottom right cell
                                     let mut dimensions = a.value.split(|b| b == &b':');
 
-                                    let m = Sheet::convert_dim_to_row_col(
-                                        dimensions.next().unwrap(),
-                                    )?;
+                                    let m =
+                                        Sheet::convert_dim_to_row_col(dimensions.next().unwrap())?;
                                     if let Some(x) = dimensions.next() {
                                         let x = Sheet::convert_dim_to_row_col(x)?;
                                         self.dimensions = (m, x);
@@ -335,9 +340,8 @@ impl Sheet {
                                                 _ => (),
                                             },
                                             b"topLeftCell" => {
-                                                self.top_left_cell = Some(
-                                                    Sheet::convert_dim_to_row_col(&a.value)?,
-                                                );
+                                                self.top_left_cell =
+                                                    Some(Sheet::convert_dim_to_row_col(&a.value)?);
                                             }
                                             b"colorId" => {
                                                 match a.value.as_ref() {
@@ -547,24 +551,22 @@ impl Sheet {
                             Ok(Event::End(ref e)) if e.local_name().as_ref() == b"sheetViews" => {
                                 break
                             }
-                            Ok(Event::Eof) => {
-                                return Err(XcelmateError::XmlEof("sheetViews".into()))
-                            }
-                            Err(e) => return Err(XcelmateError::Xml(e)),
+                            Ok(Event::Eof) => return Err(XlsxError::XmlEof("sheetViews".into())),
+                            Err(e) => return Err(XlsxError::Xml(e)),
                             _ => (),
                         }
                     }
                 }
-                Ok(Event::End(ref e)) if e.local_name().as_ref() == b"Sheet" => break,
-                Ok(Event::Eof) => return Err(XcelmateError::XmlEof("Sheet".into())),
-                Err(e) => return Err(XcelmateError::Xml(e)),
+                Ok(Event::End(ref e)) if e.local_name().as_ref() == b"worksheet" => break,
+                Ok(Event::Eof) => return Err(XlsxError::XmlEof("worksheet".into())),
+                Err(e) => return Err(XlsxError::Xml(e)),
                 _ => (),
             }
         }
         Ok(())
     }
 
-    fn convert_dim_to_row_col(dimension: &[u8]) -> Result<(Col, Row), XcelmateError> {
+    fn convert_dim_to_row_col(dimension: &[u8]) -> Result<(Col, Row), XlsxError> {
         let mut col: Vec<u8> = Vec::with_capacity(3);
         let mut row: Vec<u8> = Vec::with_capacity(7);
 
@@ -576,7 +578,7 @@ impl Sheet {
             } else {
                 let mut buf = String::with_capacity(11);
                 let _ = dimension.as_ref().read_to_string(&mut buf)?;
-                return Err(XcelmateError::ExcelDimensionParseError(buf));
+                return Err(XlsxError::ExcelDimensionParseError(buf));
             }
         }
 
@@ -586,7 +588,7 @@ impl Sheet {
             if c < &b'A' || c > &b'Z' {
                 let mut buf = String::with_capacity(11);
                 let _ = dimension.as_ref().read_to_string(&mut buf)?;
-                return Err(XcelmateError::ExcelDimensionParseError(buf));
+                return Err(XlsxError::ExcelDimensionParseError(buf));
             }
             let value = *c as i32 - 'A' as i32 + 1;
             result = result * 26 + value;
@@ -597,9 +599,9 @@ impl Sheet {
             .fold(0, |acc, &byte| acc * 10 + (&byte - b'0') as u32);
         let col = result as u16;
         if row > MAX_ROWS {
-            return Err(XcelmateError::ExcelMaxRowExceeded);
+            return Err(XlsxError::ExcelMaxRowExceeded);
         } else if col > MAX_COLUMNS {
-            return Err(XcelmateError::ExcelMaxColumnExceeded);
+            return Err(XlsxError::ExcelMaxColumnExceeded);
         } else {
             Ok((col - 1, row - 1))
         }
@@ -611,34 +613,12 @@ mod sheet_unittests {
     use std::fs::File;
     use zip::ZipArchive;
 
-    fn init(path: &str, sheet: &str) -> Sheet {
+    fn init(path: &str, sheet_path: &str) -> Sheet {
         let file = File::open(path).unwrap();
         let mut zip = ZipArchive::new(file).unwrap();
-        let mut Sheet = Sheet {
-            show_grid: true,
-            show_zero: true,
-            show_outline_symbol: true,
-            name: Default::default(),
-            tab_color: Default::default(),
-            fit: Default::default(),
-            dimensions: Default::default(),
-            zoom_scale: Default::default(),
-            zoom_scale_page: Default::default(),
-            zoom_scale_sheet: Default::default(),
-            view_id: Default::default(),
-            show_tab: Default::default(),
-            show_ruler: Default::default(),
-            show_header: Default::default(),
-            default_grid_color: Default::default(),
-            show_formula: Default::default(),
-            show_whitespace: Default::default(),
-            use_protection: Default::default(),
-            use_rtl: Default::default(),
-            top_left_cell: Default::default(),
-            view: Default::default(),
-        };
-        Sheet.read_sheet(&mut zip, sheet).unwrap();
-        Sheet
+        let mut sheet = Sheet::new(sheet_path);
+        sheet.read_sheet(&mut zip).unwrap();
+        sheet
     }
 
     mod sheet_api {
@@ -669,8 +649,7 @@ mod sheet_unittests {
 
         #[test]
         fn test_convert_dim_to_row_col_at_max_row() {
-            let actual =
-                Sheet::convert_dim_to_row_col(&"XFD1048576".as_bytes().to_vec()).unwrap();
+            let actual = Sheet::convert_dim_to_row_col(&"XFD1048576".as_bytes().to_vec()).unwrap();
 
             assert_eq!(actual, (16_383, 1_048_575))
         }
@@ -704,17 +683,18 @@ mod sheet_unittests {
 
         #[test]
         fn test_read_sheet() {
-            let sheet = init("tests/workbook04.xlsx", "sheet2.xml");
+            let sheet = init("tests/workbook04.xlsx", "xl/worksheets/sheet2.xml");
             assert_eq!(
                 sheet,
                 Sheet {
+                    path: "xl/worksheets/sheet2.xml".into(),
                     name: "Sheet2".into(),
                     tab_color: Some(Color::Theme { id: 5, tint: None }),
                     fit: true,
                     dimensions: ((1, 0), (6, 13)),
                     show_grid: false,
-                    zoom_scale: Some(vec![b'1', b'0', b'0']),
-                    view_id: Some(vec![b'0']),
+                    zoom_scale: Some("100".as_bytes().to_vec()),
+                    view_id: Some("0".as_bytes().to_vec()),
                     ..Default::default()
                 }
             );
