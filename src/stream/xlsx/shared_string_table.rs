@@ -1,8 +1,6 @@
 //! The module holds all logic to fully deserialize the sharedStrings.xml in the .xlsx file
-use crate::{
-    errors::XcelmateError,
-    stream::utils::{xml_reader, Key, Save, XmlWriter},
-};
+use super::{errors::XlsxError, stylesheet::FontProperty, Stylesheet};
+use crate::stream::utils::{xml_reader, Key, Save, XmlWriter};
 use bimap::BiBTreeMap;
 use quick_xml::{
     events::{attributes::Attribute, BytesDecl, BytesText, Event},
@@ -18,7 +16,6 @@ use zip::{
     write::{FileOptionExtension, FileOptions},
     ZipArchive,
 };
-use super::{stylesheet::FontProperty, Stylesheet};
 
 type SharedStringRef = Arc<SharedString>;
 
@@ -36,7 +33,7 @@ impl<W: Write> XmlWriter<W> for StringType {
         &self,
         writer: &'a mut Writer<W>,
         tag_name: &str,
-    ) -> Result<&'a mut Writer<W>, XcelmateError> {
+    ) -> Result<&'a mut Writer<W>, XlsxError> {
         match self {
             StringType::Preserve(s) => writer
                 .create_element(tag_name)
@@ -62,16 +59,16 @@ impl<W: Write> XmlWriter<W> for SharedString {
         &self,
         writer: &'a mut Writer<W>,
         tag_name: &'a str,
-    ) -> Result<&'a mut Writer<W>, XcelmateError> {
+    ) -> Result<&'a mut Writer<W>, XlsxError> {
         let writer = writer.create_element(tag_name);
         match self {
             SharedString::RichText(pieces) => {
-                Ok(writer.write_inner_content::<_, XcelmateError>(|writer| {
+                Ok(writer.write_inner_content::<_, XlsxError>(|writer| {
                     // <r>
                     for piece in pieces {
                         writer
                             .create_element("r")
-                            .write_inner_content::<_, XcelmateError>(|writer| {
+                            .write_inner_content::<_, XlsxError>(|writer| {
                                 piece.write_xml(writer, "rPr")?;
                                 Ok(())
                             })?;
@@ -81,7 +78,7 @@ impl<W: Write> XmlWriter<W> for SharedString {
             }
             SharedString::PlainText(st) => {
                 // <t>
-                Ok(writer.write_inner_content::<_, XcelmateError>(|writer| {
+                Ok(writer.write_inner_content::<_, XlsxError>(|writer| {
                     st.write_xml(writer, "t")?;
                     Ok(())
                 })?)
@@ -103,7 +100,7 @@ impl<W: Write> XmlWriter<W> for StringPiece {
         &self,
         writer: &'a mut Writer<W>,
         tag_name: &str,
-    ) -> Result<&'a mut Writer<W>, XcelmateError> {
+    ) -> Result<&'a mut Writer<W>, XlsxError> {
         if let Some(props) = &self.props {
             props.write_xml(writer, tag_name)?;
         }
@@ -127,7 +124,7 @@ impl<W: Write> XmlWriter<W> for SharedStringTable {
         &self,
         writer: &'a mut Writer<W>,
         tag_name: &str,
-    ) -> Result<&'a mut Writer<W>, XcelmateError> {
+    ) -> Result<&'a mut Writer<W>, XlsxError> {
         writer.write_event(Event::Decl(BytesDecl::new(
             "1.0",
             Some("UTF-8"),
@@ -143,7 +140,7 @@ impl<W: Write> XmlWriter<W> for SharedStringTable {
                 ("count", self.count.to_string().as_str()),
                 ("uniqueCount", self.table.len().to_string().as_str()),
             ])
-            .write_inner_content::<_, XcelmateError>(|writer| {
+            .write_inner_content::<_, XlsxError>(|writer| {
                 // <si>
                 for (si, _) in self.table.right_range(0..self.table.len()) {
                     si.write_xml(writer, "si")?;
@@ -158,8 +155,8 @@ impl SharedStringTable {
     pub(crate) fn read_shared_strings<'a, RS: Read + Seek>(
         &mut self,
         zip: &'a mut ZipArchive<RS>,
-    ) -> Result<(), XcelmateError> {
-        let mut xml = match xml_reader(zip, "xl/sharedStrings.xml") {
+    ) -> Result<(), XlsxError> {
+        let mut xml = match xml_reader(zip, "xl/sharedStrings.xml", None) {
             None => return Ok(()),
             Some(x) => x?,
         };
@@ -189,8 +186,8 @@ impl SharedStringTable {
                     }
                 }
                 Ok(Event::End(ref e)) if e.local_name().as_ref() == b"sst" => break,
-                Ok(Event::Eof) => return Err(XcelmateError::XmlEof("sst".into())),
-                Err(e) => return Err(XcelmateError::Xml(e)),
+                Ok(Event::Eof) => return Err(XlsxError::XmlEof("sst".into())),
+                Err(e) => return Err(XlsxError::Xml(e)),
                 _ => (),
             }
         }
@@ -202,7 +199,7 @@ impl SharedStringTable {
     fn read_string<B: BufRead>(
         xml: &mut Reader<B>,
         QName(closing): QName,
-    ) -> Result<Option<SharedString>, XcelmateError> {
+    ) -> Result<Option<SharedString>, XlsxError> {
         let mut buf = Vec::with_capacity(1024);
         let mut val_buf = Vec::with_capacity(1024);
         let mut rich_buffer: Option<SharedString> = None;
@@ -231,7 +228,7 @@ impl SharedStringTable {
                         match xml.read_event_into(&mut val_buf)? {
                             Event::Text(t) => value.push_str(&t.unescape()?),
                             Event::End(end) if end.name() == e.name() => break,
-                            Event::Eof => return Err(XcelmateError::XmlEof("t".to_string())),
+                            Event::Eof => return Err(XlsxError::XmlEof("t".to_string())),
                             _ => (),
                         }
                     }
@@ -286,8 +283,8 @@ impl SharedStringTable {
                 Ok(Event::End(ref e)) if e.local_name().as_ref() == b"rPh" => {
                     is_phonetic_text = false;
                 }
-                Ok(Event::Eof) => return Err(XcelmateError::XmlEof("".into())),
-                Err(e) => return Err(XcelmateError::Xml(e)),
+                Ok(Event::Eof) => return Err(XlsxError::XmlEof("".into())),
+                Err(e) => return Err(XlsxError::Xml(e)),
                 _ => (),
             }
         }
@@ -376,7 +373,7 @@ impl<W: Write + Seek, EX: FileOptionExtension> Save<W, EX> for SharedStringTable
         &mut self,
         writer: &mut zip::ZipWriter<W>,
         options: FileOptions<EX>,
-    ) -> Result<(), XcelmateError> {
+    ) -> Result<(), XlsxError> {
         writer.start_file("xl/sharedStrings.xml", options)?;
         self.write_xml(&mut Writer::new(writer), "sst")?;
         Ok(())

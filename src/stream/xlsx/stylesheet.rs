@@ -1,10 +1,7 @@
-use crate::{
-    errors::XcelmateError,
-    stream::utils::{xml_reader, Key, Save, XmlWriter},
-};
+use crate::stream::utils::{xml_reader, Key, Save, XmlWriter};
 use bimap::{BiBTreeMap, BiHashMap, BiMap};
 use quick_xml::{
-    events::{attributes::Attributes, BytesDecl, BytesEnd, BytesStart, Event},
+    events::{attributes::Attributes, BytesDecl, BytesStart, Event},
     name::QName,
     Reader, Writer,
 };
@@ -18,6 +15,8 @@ use zip::{
     write::{FileOptionExtension, FileOptions},
     ZipArchive,
 };
+
+use super::errors::XlsxError;
 
 /// The `Rgb` promotes better api usage with hexadecimal coloring
 #[derive(Debug, PartialEq, Clone, Eq, PartialOrd, Hash, Ord)]
@@ -63,7 +62,7 @@ impl<W: Write> XmlWriter<W> for Color {
         &self,
         writer: &'a mut Writer<W>,
         tag_name: &'a str,
-    ) -> Result<&'a mut Writer<W>, XcelmateError> {
+    ) -> Result<&'a mut Writer<W>, XlsxError> {
         let writer = writer.create_element(tag_name);
         match self {
             Color::Theme { id, tint } => {
@@ -136,10 +135,10 @@ impl<W: Write> XmlWriter<W> for FontProperty {
         &self,
         writer: &'a mut Writer<W>,
         tag_name: &str,
-    ) -> Result<&'a mut Writer<W>, XcelmateError> {
+    ) -> Result<&'a mut Writer<W>, XlsxError> {
         writer
             .create_element(tag_name)
-            .write_inner_content::<_, XcelmateError>(|writer| {
+            .write_inner_content::<_, XlsxError>(|writer| {
                 match self.strikethrough {
                     FormatState::Enabled => writer.create_element("strike").write_empty()?,
                     FormatState::Disabled => writer
@@ -254,7 +253,7 @@ impl<W: Write> XmlWriter<W> for NumberFormat {
         &self,
         writer: &'a mut Writer<W>,
         tag_name: &str,
-    ) -> Result<&'a mut Writer<W>, XcelmateError> {
+    ) -> Result<&'a mut Writer<W>, XlsxError> {
         writer
             .create_element(tag_name)
             .with_attributes(vec![
@@ -279,7 +278,7 @@ impl<W: Write> XmlWriter<W> for PatternFill {
         &self,
         writer: &'a mut Writer<W>,
         tag_name: &'a str,
-    ) -> Result<&'a mut Writer<W>, XcelmateError> {
+    ) -> Result<&'a mut Writer<W>, XlsxError> {
         match self {
             PatternFill::None => Ok(writer
                 .create_element(tag_name)
@@ -306,21 +305,21 @@ impl<W: Write> XmlWriter<W> for Fill {
         &self,
         writer: &'a mut Writer<W>,
         tag_name: &'a str,
-    ) -> Result<&'a mut Writer<W>, XcelmateError> {
+    ) -> Result<&'a mut Writer<W>, XlsxError> {
         let writer = writer
             .create_element(tag_name)
-            .write_inner_content::<_, XcelmateError>(|writer| {
+            .write_inner_content::<_, XlsxError>(|writer| {
                 let writer_fill = writer.create_element("patternFill");
                 match (&self.r#type, &self.background, &self.foreground) {
                     (PatternFill::None, Some(bg), Some(fg)) => writer_fill
-                        .write_inner_content::<_, XcelmateError>(|writer| {
+                        .write_inner_content::<_, XlsxError>(|writer| {
                             fg.write_xml(writer, "fgColor")?;
                             bg.write_xml(writer, "bgColor")?;
                             Ok(())
                         })?,
                     (PatternFill::Solid, Some(bg), Some(fg)) => writer_fill
                         .with_attribute(("patternType", "solid"))
-                        .write_inner_content::<_, XcelmateError>(|writer| {
+                        .write_inner_content::<_, XlsxError>(|writer| {
                             fg.write_xml(writer, "fgColor")?;
                             bg.write_xml(writer, "bgColor")?;
                             Ok(())
@@ -393,12 +392,12 @@ impl<W: Write> XmlWriter<W> for BorderRegion {
         &self,
         writer: &'a mut Writer<W>,
         tag_name: &'a str,
-    ) -> Result<&'a mut Writer<W>, XcelmateError> {
+    ) -> Result<&'a mut Writer<W>, XlsxError> {
         if let (Some(style), Some(color)) = (&self.style, &self.color) {
             let writer = writer
                 .create_element(tag_name)
                 .with_attribute(("style", style.to_string().as_str()))
-                .write_inner_content::<_, XcelmateError>(|writer| {
+                .write_inner_content::<_, XlsxError>(|writer| {
                     color.write_xml(writer, "color")?;
                     Ok(())
                 });
@@ -423,10 +422,10 @@ impl<W: Write> XmlWriter<W> for Border {
         &self,
         writer: &'a mut Writer<W>,
         tag_name: &'a str,
-    ) -> Result<&'a mut Writer<W>, XcelmateError> {
+    ) -> Result<&'a mut Writer<W>, XlsxError> {
         let writer = writer
             .create_element(tag_name)
-            .write_inner_content::<_, XcelmateError>(|writer| {
+            .write_inner_content::<_, XlsxError>(|writer| {
                 self.left.write_xml(writer, "left")?;
                 self.right.write_xml(writer, "right")?;
                 self.top.write_xml(writer, "top")?;
@@ -508,10 +507,10 @@ impl<W: Write> XmlWriter<W> for DiffXf {
         &self,
         writer: &'a mut Writer<W>,
         tag_name: &'a str,
-    ) -> Result<&'a mut Writer<W>, XcelmateError> {
+    ) -> Result<&'a mut Writer<W>, XlsxError> {
         let writer = writer
             .create_element(tag_name)
-            .write_inner_content::<_, XcelmateError>(|writer| {
+            .write_inner_content::<_, XlsxError>(|writer| {
                 if let Some(font) = &self.font {
                     font.write_xml(writer, "font")?;
                 }
@@ -580,7 +579,7 @@ impl<W: Write> XmlWriter<W> for Stylesheet {
         &self,
         writer: &'a mut Writer<W>,
         tag_name: &str,
-    ) -> Result<&'a mut Writer<W>, XcelmateError> {
+    ) -> Result<&'a mut Writer<W>, XlsxError> {
         writer.write_event(Event::Decl(BytesDecl::new(
             "1.0",
             Some("UTF-8"),
@@ -615,14 +614,14 @@ impl<W: Write> XmlWriter<W> for Stylesheet {
                     "http://schemas.microsoft.com/office/spreadsheetml/2016/revision9",
                 ),
             ])
-            .write_inner_content::<_, XcelmateError>(|writer| {
+            .write_inner_content::<_, XlsxError>(|writer| {
                 // <numFmts>
                 if let Some(numfmt) = &self.number_formats {
                     // Includes builtin in total count (should remove this)
                     let _ = writer
                         .create_element("numFmts")
                         .with_attribute(("count", numfmt.len().to_string().as_str()))
-                        .write_inner_content::<_, XcelmateError>(|writer| {
+                        .write_inner_content::<_, XlsxError>(|writer| {
                             for n in numfmt.left_values() {
                                 n.write_xml(writer, "numFmt")?;
                             }
@@ -633,7 +632,7 @@ impl<W: Write> XmlWriter<W> for Stylesheet {
                 let _ = writer
                     .create_element("fonts")
                     .with_attribute(("count", self.fonts.len().to_string().as_str()))
-                    .write_inner_content::<_, XcelmateError>(|writer| {
+                    .write_inner_content::<_, XlsxError>(|writer| {
                         for (font, _) in self.fonts.right_range(0..self.fonts.len()) {
                             font.write_xml(writer, "font")?;
                         }
@@ -643,7 +642,7 @@ impl<W: Write> XmlWriter<W> for Stylesheet {
                 let _ = writer
                     .create_element("fills")
                     .with_attribute(("count", self.fills.len().to_string().as_str()))
-                    .write_inner_content::<_, XcelmateError>(|writer| {
+                    .write_inner_content::<_, XlsxError>(|writer| {
                         for (fill, _) in self.fills.right_range(0..self.fonts.len()) {
                             fill.write_xml(writer, "fill")?;
                         }
@@ -653,7 +652,7 @@ impl<W: Write> XmlWriter<W> for Stylesheet {
                 let _ = writer
                     .create_element("borders")
                     .with_attribute(("count", self.borders.len().to_string().as_str()))
-                    .write_inner_content::<_, XcelmateError>(|writer| {
+                    .write_inner_content::<_, XlsxError>(|writer| {
                         for (border, _) in self.borders.right_range(0..self.borders.len()) {
                             border.write_xml(writer, "border")?;
                         }
@@ -663,7 +662,7 @@ impl<W: Write> XmlWriter<W> for Stylesheet {
                 let _ = writer
                     .create_element("cellStyleXfs")
                     .with_attribute(("count", "1"))
-                    .write_inner_content::<_, XcelmateError>(|writer| {
+                    .write_inner_content::<_, XlsxError>(|writer| {
                         writer
                             .create_element("xf")
                             .with_attributes(vec![
@@ -679,7 +678,7 @@ impl<W: Write> XmlWriter<W> for Stylesheet {
                 let _ = writer
                     .create_element("cellXfs")
                     .with_attribute(("count", self.cell_xf.len().to_string().as_str()))
-                    .write_inner_content::<_, XcelmateError>(|writer| {
+                    .write_inner_content::<_, XlsxError>(|writer| {
                         for (xf, _) in self.cell_xf.right_range(0..self.cell_xf.len()) {
                             let writer = writer.create_element("xf");
 
@@ -719,7 +718,7 @@ impl<W: Write> XmlWriter<W> for Stylesheet {
                             };
 
                             if let Some(align) = &xf.align {
-                                writer.write_inner_content::<_, XcelmateError>(|writer| {
+                                writer.write_inner_content::<_, XlsxError>(|writer| {
                                     let mut attrs = vec![];
                                     if align.wrap {
                                         attrs.push(("wrapText", "1"))
@@ -759,7 +758,7 @@ impl<W: Write> XmlWriter<W> for Stylesheet {
                 let _ = writer
                     .create_element("cellStyles")
                     .with_attribute(("count", "1"))
-                    .write_inner_content::<_, XcelmateError>(|writer| {
+                    .write_inner_content::<_, XlsxError>(|writer| {
                         writer
                             .create_element("cellStyle")
                             .with_attributes(vec![
@@ -774,11 +773,11 @@ impl<W: Write> XmlWriter<W> for Stylesheet {
                 let _ = writer
                     .create_element("dxfs")
                     .with_attribute(("count", self.diff_xf.len().to_string().as_str()))
-                    .write_inner_content::<_, XcelmateError>(|writer| {
+                    .write_inner_content::<_, XlsxError>(|writer| {
                         for (diff_xf, _) in self.diff_xf.right_range(0..self.diff_xf.len()) {
                             let _ = writer
                                 .create_element("dxf")
-                                .write_inner_content::<_, XcelmateError>(|writer| {
+                                .write_inner_content::<_, XlsxError>(|writer| {
                                     if let Some(font) = &diff_xf.font {
                                         font.write_xml(writer, "font")?;
                                     }
@@ -806,43 +805,42 @@ impl<W: Write> XmlWriter<W> for Stylesheet {
                         ]);
                     if !table_style.styles.is_empty() {
                         // <tableStyle>
-                        let _ =
-                            table_style_writer.write_inner_content::<_, XcelmateError>(|writer| {
-                                for (_, style) in &table_style.styles {
-                                    let _ = writer
-                                        .create_element("tableStyle")
-                                        .with_attributes(vec![
-                                            ("pivot", style.pivot.to_string().as_str()),
-                                            ("count", style.elements.len().to_string().as_str()),
-                                            ("xr9:uid", style.uid.as_str()),
-                                            ("name", style.name.as_str()),
-                                        ])
-                                        // <tableStyleElement>
-                                        .write_inner_content::<_, XcelmateError>(|writer| {
-                                            for ele in &style.elements {
-                                                let dxf = match ele {
-                                                    TableStyleElement::Table(dxf)
-                                                    | TableStyleElement::Header(dxf)
-                                                    | TableStyleElement::FirstRow(dxf)
-                                                    | TableStyleElement::SecondRow(dxf) => dxf,
-                                                };
-                                                let dxf_id = self
-                                                    .get_key_from_differential_ref(dxf.clone())
-                                                    .unwrap()
-                                                    .to_string();
-                                                writer
-                                                    .create_element("tableStyleElement")
-                                                    .with_attributes(vec![
-                                                        ("type", ele.to_string().as_str()),
-                                                        ("dxfId", dxf_id.as_str()),
-                                                    ])
-                                                    .write_empty()?;
-                                            }
-                                            Ok(())
-                                        });
-                                }
-                                Ok(())
-                            });
+                        let _ = table_style_writer.write_inner_content::<_, XlsxError>(|writer| {
+                            for (_, style) in &table_style.styles {
+                                let _ = writer
+                                    .create_element("tableStyle")
+                                    .with_attributes(vec![
+                                        ("pivot", style.pivot.to_string().as_str()),
+                                        ("count", style.elements.len().to_string().as_str()),
+                                        ("xr9:uid", style.uid.as_str()),
+                                        ("name", style.name.as_str()),
+                                    ])
+                                    // <tableStyleElement>
+                                    .write_inner_content::<_, XlsxError>(|writer| {
+                                        for ele in &style.elements {
+                                            let dxf = match ele {
+                                                TableStyleElement::Table(dxf)
+                                                | TableStyleElement::Header(dxf)
+                                                | TableStyleElement::FirstRow(dxf)
+                                                | TableStyleElement::SecondRow(dxf) => dxf,
+                                            };
+                                            let dxf_id = self
+                                                .get_key_from_differential_ref(dxf.clone())
+                                                .unwrap()
+                                                .to_string();
+                                            writer
+                                                .create_element("tableStyleElement")
+                                                .with_attributes(vec![
+                                                    ("type", ele.to_string().as_str()),
+                                                    ("dxfId", dxf_id.as_str()),
+                                                ])
+                                                .write_empty()?;
+                                        }
+                                        Ok(())
+                                    });
+                            }
+                            Ok(())
+                        });
                     } else {
                         table_style_writer.write_empty()?;
                     }
@@ -857,7 +855,7 @@ impl<W: Write + Seek, EX: FileOptionExtension> Save<W, EX> for Stylesheet {
         &mut self,
         writer: &mut zip::ZipWriter<W>,
         options: FileOptions<EX>,
-    ) -> Result<(), XcelmateError> {
+    ) -> Result<(), XlsxError> {
         writer.start_file("xl/styles.xml", options)?;
         self.write_xml(&mut Writer::new(writer), "styleSheet")?;
         Ok(())
@@ -867,9 +865,9 @@ impl Stylesheet {
     pub(crate) fn read_stylesheet<'a, RS: Read + Seek>(
         &mut self,
         zip: &'a mut ZipArchive<RS>,
-    ) -> Result<(), XcelmateError> {
-        let mut xml = match xml_reader(zip, "xl/styles.xml") {
-            None => return Err(XcelmateError::StylesMissing),
+    ) -> Result<(), XlsxError> {
+        let mut xml = match xml_reader(zip, "xl/styles.xml", None) {
+            None => return Err(XlsxError::StylesMissing),
             Some(x) => x?,
         };
         let mut buf = Vec::with_capacity(1024);
@@ -1045,11 +1043,9 @@ impl Stylesheet {
                                                 break
                                             }
                                             Ok(Event::Eof) => {
-                                                return Err(XcelmateError::XmlEof(
-                                                    "alignment".into(),
-                                                ))
+                                                return Err(XlsxError::XmlEof("alignment".into()))
                                             }
-                                            Err(e) => return Err(XcelmateError::Xml(e)),
+                                            Err(e) => return Err(XlsxError::Xml(e)),
                                             _ => (),
                                         }
                                     }
@@ -1057,8 +1053,8 @@ impl Stylesheet {
                                 self.add_cell_ref_to_table(Arc::new(cell_xf));
                             }
                             Ok(Event::End(ref e)) if e.local_name().as_ref() == b"cellXfs" => break,
-                            Ok(Event::Eof) => return Err(XcelmateError::XmlEof("cellXfs".into())),
-                            Err(e) => return Err(XcelmateError::Xml(e)),
+                            Ok(Event::Eof) => return Err(XlsxError::XmlEof("cellXfs".into())),
+                            Err(e) => return Err(XlsxError::Xml(e)),
                             _ => (),
                         }
                     }
@@ -1085,8 +1081,8 @@ impl Stylesheet {
                                 diff_xf.fill = Some(Stylesheet::read_fill(&mut xml, e.name())?);
                             }
                             Ok(Event::End(ref e)) if e.local_name().as_ref() == b"dxf" => break,
-                            Ok(Event::Eof) => return Err(XcelmateError::XmlEof("dxf".into())),
-                            Err(e) => return Err(XcelmateError::Xml(e)),
+                            Ok(Event::Eof) => return Err(XlsxError::XmlEof("dxf".into())),
+                            Err(e) => return Err(XlsxError::Xml(e)),
                             _ => (),
                         }
                     }
@@ -1197,7 +1193,7 @@ impl Stylesheet {
                                     "headerRow" => Ok(TableStyleElement::Header(diff)),
                                     "firstRowStripe" => Ok(TableStyleElement::FirstRow(diff)),
                                     "secondRowStripe" => Ok(TableStyleElement::SecondRow(diff)),
-                                    v => Err(XcelmateError::MissingVariant(
+                                    v => Err(XlsxError::MissingVariant(
                                         "TableStyleElement".into(),
                                         v.into(),
                                     )),
@@ -1214,18 +1210,16 @@ impl Stylesheet {
                             Ok(Event::End(ref e)) if e.local_name().as_ref() == b"tableStyles" => {
                                 break
                             }
-                            Ok(Event::Eof) => {
-                                return Err(XcelmateError::XmlEof("tableStyles".into()))
-                            }
-                            Err(e) => return Err(XcelmateError::Xml(e)),
+                            Ok(Event::Eof) => return Err(XlsxError::XmlEof("tableStyles".into())),
+                            Err(e) => return Err(XlsxError::Xml(e)),
                             _ => (),
                         }
                     }
                     self.add_table_style(table_style.into());
                 }
                 Ok(Event::End(ref e)) if e.local_name().as_ref() == b"styleSheet" => break,
-                Ok(Event::Eof) => return Err(XcelmateError::XmlEof("styleSheet".into())),
-                Err(e) => return Err(XcelmateError::Xml(e)),
+                Ok(Event::Eof) => return Err(XlsxError::XmlEof("styleSheet".into())),
+                Err(e) => return Err(XlsxError::Xml(e)),
                 _ => (),
             }
         }
@@ -1425,7 +1419,7 @@ impl Stylesheet {
         item
     }
 
-    pub(crate) fn read_color(attributes: Attributes) -> Result<Color, XcelmateError>{
+    pub(crate) fn read_color(attributes: Attributes) -> Result<Color, XlsxError> {
         ////////////////////
         // COLOR Attrs
         /////////////
@@ -1434,8 +1428,7 @@ impl Stylesheet {
             if let Ok(a) = attr {
                 match a.key {
                     QName(b"rgb") => {
-                        color =
-                            Stylesheet::to_rgb(a.unescape_value()?.to_string())?;
+                        color = Stylesheet::to_rgb(a.unescape_value()?.to_string())?;
                     }
                     QName(b"theme") => {
                         color = Color::Theme {
@@ -1444,12 +1437,10 @@ impl Stylesheet {
                         };
                     }
                     QName(b"auto") => {
-                        color =
-                            Color::Auto(a.unescape_value()?.parse::<u32>()?);
+                        color = Color::Auto(a.unescape_value()?.parse::<u32>()?);
                     }
                     QName(b"indexed") => {
-                        color =
-                            Color::Index(a.unescape_value()?.parse::<u32>()?);
+                        color = Color::Index(a.unescape_value()?.parse::<u32>()?);
                     }
                     QName(b"tint") => match color {
                         Color::Theme { id, .. } => {
@@ -1471,12 +1462,12 @@ impl Stylesheet {
     fn read_border<B: BufRead>(
         xml: &mut Reader<B>,
         QName(mut closing): QName,
-    ) -> Result<Border, XcelmateError> {
+    ) -> Result<Border, XlsxError> {
         fn read_region<B: BufRead>(
             xml: &mut Reader<B>,
             region: &BytesStart,
             border_region: &mut BorderRegion,
-        ) -> Result<(), XcelmateError> {
+        ) -> Result<(), XlsxError> {
             for attr in region.attributes() {
                 if let Ok(a) = attr {
                     ////////////////////
@@ -1530,9 +1521,9 @@ impl Stylesheet {
                     Ok(Event::Eof) => {
                         let mut name = String::new();
                         let _ = region.as_ref().read_to_string(&mut name)?;
-                        return Err(XcelmateError::XmlEof(name));
+                        return Err(XlsxError::XmlEof(name));
                     }
-                    Err(e) => return Err(XcelmateError::Xml(e)),
+                    Err(e) => return Err(XlsxError::Xml(e)),
                     _ => (),
                 }
             }
@@ -1568,7 +1559,7 @@ impl Stylesheet {
                 Ok(Event::Eof) => {
                     let mut name = String::new();
                     let _ = closing.read_to_string(&mut name)?;
-                    return Err(XcelmateError::XmlEof(name));
+                    return Err(XlsxError::XmlEof(name));
                 }
                 _ => (),
             }
@@ -1579,7 +1570,7 @@ impl Stylesheet {
     pub(crate) fn read_font<B: BufRead>(
         xml: &mut Reader<B>,
         QName(mut closing): QName,
-    ) -> Result<FontProperty, XcelmateError> {
+    ) -> Result<FontProperty, XlsxError> {
         let mut buf = Vec::with_capacity(1024);
         let mut font = FontProperty::default();
         loop {
@@ -1766,9 +1757,9 @@ impl Stylesheet {
                 Ok(Event::Eof) => {
                     let mut name = String::new();
                     let _ = closing.read_to_string(&mut name)?;
-                    return Err(XcelmateError::XmlEof(name));
+                    return Err(XlsxError::XmlEof(name));
                 }
-                Err(e) => return Err(XcelmateError::Xml(e)),
+                Err(e) => return Err(XlsxError::Xml(e)),
                 _ => (),
             }
         }
@@ -1778,7 +1769,7 @@ impl Stylesheet {
     fn read_fill<B: BufRead>(
         xml: &mut Reader<B>,
         QName(mut closing): QName,
-    ) -> Result<Fill, XcelmateError> {
+    ) -> Result<Fill, XlsxError> {
         let mut buf = Vec::with_capacity(1024);
         let mut fill = Fill::default();
         loop {
@@ -1817,16 +1808,16 @@ impl Stylesheet {
                 Ok(Event::Eof) => {
                     let mut name = String::new();
                     let _ = closing.read_to_string(&mut name)?;
-                    return Err(XcelmateError::XmlEof(name));
+                    return Err(XlsxError::XmlEof(name));
                 }
-                Err(e) => return Err(XcelmateError::Xml(e)),
+                Err(e) => return Err(XlsxError::Xml(e)),
                 _ => (),
             }
         }
     }
 
     /// Convert from hexadecimal to a tuple of RGB model
-    pub(crate) fn to_rgb(value: String) -> Result<Color, XcelmateError> {
+    pub(crate) fn to_rgb(value: String) -> Result<Color, XlsxError> {
         // The first two letter are ignored since they response to alpha
         let base16 = 16u32;
         let red = u8::from_str_radix(&value[2..4], base16)?;

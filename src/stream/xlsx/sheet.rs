@@ -124,12 +124,13 @@ pub(crate) enum GridlineColor {
     Green = 17,
 }
 
-#[derive(Debug, PartialEq, Clone, Eq)]
+#[derive(Debug, Default, PartialEq, Clone, Eq)]
 pub struct Sheet {
     path: String,
-    name: String,
+    name: Option<String>,
     tab_color: Option<Color>,
-    fit: bool,
+    fit_to_page: bool,
+    auto_page_break: bool,
     dimensions: ((Col, Row), (Col, Row)),
     show_grid: bool,
     zoom_scale: Option<Vec<u8>>, // writes zoomScale and zoomNormalScale with same value
@@ -148,34 +149,17 @@ pub struct Sheet {
     use_rtl: bool,
     top_left_cell: Option<(Col, Row)>,
     view: Option<View>,
-}
-impl Default for Sheet {
-    fn default() -> Self {
-        Self {
-            path: Default::default(),
-            show_grid: true,
-            show_zero: true,
-            show_outline_symbol: true,
-            name: Default::default(),
-            tab_color: Default::default(),
-            fit: Default::default(),
-            dimensions: Default::default(),
-            zoom_scale: Default::default(),
-            zoom_scale_page: Default::default(),
-            zoom_scale_sheet: Default::default(),
-            view_id: Default::default(),
-            show_tab: Default::default(),
-            show_ruler: Default::default(),
-            show_header: Default::default(),
-            default_grid_color: Default::default(),
-            show_formula: Default::default(),
-            show_whitespace: Default::default(),
-            use_protection: Default::default(),
-            use_rtl: Default::default(),
-            top_left_cell: Default::default(),
-            view: Default::default(),
-        }
-    }
+    enable_cond_format_calc: bool,
+    published: bool,
+    sync_vertical: bool,
+    sync_horizontal: bool,
+    sync_ref: Option<String>,
+    transition_eval: bool,
+    transition_entry: bool,
+    filter_mode: bool,
+    apply_outline_style: bool,
+    show_summary_below: bool, // summary row should be inserted to above when off
+    show_summary_right: bool, // sumamry row should be inserted to left when off
 }
 impl Sheet {
     fn new(path: &str) -> Self {
@@ -183,12 +167,16 @@ impl Sheet {
             path: path.into(),
             show_grid: true,
             show_zero: true,
+            apply_outline_style: false,
+            show_summary_below: true,
+            show_summary_right: true,
             show_outline_symbol: true,
             view: None,
             default_grid_color: GridlineColor::Automatic,
-            name: "".into(),
+            name: None,
             tab_color: None,
-            fit: false,
+            fit_to_page: false,
+            auto_page_break: true,
             dimensions: ((0, 0), (0, 0)),
             zoom_scale: None,
             zoom_scale_page: None,
@@ -202,13 +190,21 @@ impl Sheet {
             use_protection: false,
             use_rtl: false,
             top_left_cell: None,
+            enable_cond_format_calc: true,
+            published: true,
+            sync_vertical: false,
+            sync_horizontal: false,
+            sync_ref: None,
+            transition_eval: false,
+            transition_entry: false,
+            filter_mode: false,
         }
     }
-    pub fn read_sheet<'a, RS: Read + Seek>(
+    pub fn read_properties<'a, RS: Read + Seek>(
         &mut self,
         zip: &'a mut ZipArchive<RS>,
     ) -> Result<(), XlsxError> {
-        let mut xml = match xml_reader(zip, &self.path) {
+        let mut xml = match xml_reader(zip, &self.path, None) {
             None => return Err(XlsxError::SheetNotFound(self.path.clone())),
             Some(x) => x?,
         };
@@ -226,7 +222,10 @@ impl Sheet {
                     for attr in e.attributes() {
                         if let Ok(a) = attr {
                             match a.key.as_ref() {
-                                b"codeName" => self.name = a.unescape_value()?.to_string(),
+                                b"codeName" => self.name = Some(a.unescape_value()?.to_string()),
+                                b"enableFormatConditions" => {
+                                    self.enable_cond_format_calc = *a.value == *b"1"
+                                }
                                 _ => (),
                             }
                         }
@@ -242,19 +241,13 @@ impl Sheet {
                     for attr in e.attributes() {
                         if let Ok(a) = attr {
                             match a.key.as_ref() {
-                                b"fitToPage" => {
-                                    if a.unescape_value()?.parse::<u32>()? == 1 {
-                                        self.fit = true
-                                    }
-                                }
+                                b"fitToPage" => self.fit_to_page = *a.value != *b"0",
+                                b"autoPageBreaks" => self.auto_page_break = *a.value == *b"1",
                                 _ => (),
                             }
                         }
                     }
                 }
-                ////////////////////
-                // Sheet nth-1
-                /////////////
                 Ok(Event::Empty(ref e)) if e.local_name().as_ref() == b"dimension" => {
                     for attr in e.attributes() {
                         if let Ok(a) = attr {
@@ -277,6 +270,27 @@ impl Sheet {
                         }
                     }
                 }
+                Ok(Event::End(ref e)) if e.local_name().as_ref() == b"sheetPr" => break,
+                Ok(Event::Eof) => return Err(XlsxError::XmlEof("sheetPr".into())),
+                Err(e) => return Err(XlsxError::Xml(e)),
+                _ => (),
+            }
+        }
+        Ok(())
+    }
+    pub fn read_sheet<'a, RS: Read + Seek>(
+        &mut self,
+        zip: &'a mut ZipArchive<RS>,
+    ) -> Result<(), XlsxError> {
+        let mut xml = match xml_reader(zip, &self.path, None) {
+            None => return Err(XlsxError::SheetNotFound(self.path.clone())),
+            Some(x) => x?,
+        };
+
+        let mut buf = Vec::with_capacity(1024);
+        loop {
+            buf.clear();
+            match xml.read_event_into(&mut buf) {
                 ////////////////////
                 // SHEET VIEW
                 /////////////
@@ -329,7 +343,7 @@ impl Sheet {
                                                 self.show_outline_symbol = *a.value != *b"0"
                                             }
                                             b"showWhiteSpace" => {
-                                                self.show_outline_symbol = *a.value == *b"1";
+                                                self.show_whitespace = *a.value == *b"1";
                                             }
                                             b"view" => match a.value.as_ref() {
                                                 b"pageBreakPreview" => {
@@ -622,6 +636,11 @@ mod sheet_unittests {
     }
 
     mod sheet_api {
+        use std::{
+            fs::File,
+            io::{Seek, SeekFrom},
+        };
+
         use super::init;
         use crate::stream::xlsx::sheet::{Color, GridlineColor, Sheet};
 
@@ -688,9 +707,9 @@ mod sheet_unittests {
                 sheet,
                 Sheet {
                     path: "xl/worksheets/sheet2.xml".into(),
-                    name: "Sheet2".into(),
+                    name: Some("Sheet2".into()),
                     tab_color: Some(Color::Theme { id: 5, tint: None }),
-                    fit: true,
+                    fit_to_page: true,
                     dimensions: ((1, 0), (6, 13)),
                     show_grid: false,
                     zoom_scale: Some("100".as_bytes().to_vec()),
