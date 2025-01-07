@@ -1,9 +1,12 @@
 //! The module holds all logic to fully deserialize a .xlsx file and its contents
 mod shared_string_table;
+mod sheet;
 mod stylesheet;
 
+use super::utils::Save;
 use crate::errors::XcelmateError;
 use shared_string_table::SharedStringTable;
+use sheet::Sheet;
 use std::{
     fs::File,
     io::{Read, Seek},
@@ -11,17 +14,17 @@ use std::{
 use stylesheet::Stylesheet;
 use zip::{write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
 
-use super::utils::Save;
-
 /// The `Xlsx` struct represents an Excel workbook stored in an OpenXML format (XLSX).
 /// It encapsulates foundational pieces of a workbook
-struct Xlsx<RS> {
+pub(crate) struct Xlsx<RS> {
     /// The zip archive containing all files of the XLSX workbook.
     zip: ZipArchive<RS>,
     /// The shared string table for efficient mapping of shared strings.
     shared_string_table: SharedStringTable,
     /// The stylesheet for formating cells.
     style: Stylesheet,
+    // All sheets in workbook
+    sheets: Vec<Sheet>,
 }
 
 impl<RS: Read + Seek> Xlsx<RS> {

@@ -4,7 +4,7 @@ use crate::{
 };
 use bimap::{BiBTreeMap, BiHashMap, BiMap};
 use quick_xml::{
-    events::{BytesDecl, BytesStart, Event},
+    events::{attributes::Attributes, BytesDecl, BytesEnd, BytesStart, Event},
     name::QName,
     Reader, Writer,
 };
@@ -1425,6 +1425,48 @@ impl Stylesheet {
         item
     }
 
+    pub(crate) fn read_color(attributes: Attributes) -> Result<Color, XcelmateError>{
+        ////////////////////
+        // COLOR Attrs
+        /////////////
+        let mut color = Color::default();
+        for attr in attributes {
+            if let Ok(a) = attr {
+                match a.key {
+                    QName(b"rgb") => {
+                        color =
+                            Stylesheet::to_rgb(a.unescape_value()?.to_string())?;
+                    }
+                    QName(b"theme") => {
+                        color = Color::Theme {
+                            id: a.unescape_value()?.parse::<u32>()?,
+                            tint: None,
+                        };
+                    }
+                    QName(b"auto") => {
+                        color =
+                            Color::Auto(a.unescape_value()?.parse::<u32>()?);
+                    }
+                    QName(b"indexed") => {
+                        color =
+                            Color::Index(a.unescape_value()?.parse::<u32>()?);
+                    }
+                    QName(b"tint") => match color {
+                        Color::Theme { id, .. } => {
+                            color = Color::Theme {
+                                id,
+                                tint: Some(a.unescape_value()?.to_string()),
+                            };
+                        }
+                        _ => (),
+                    },
+                    _ => (),
+                }
+            }
+        }
+        Ok(color)
+    }
+
     /// Read either left, right, top, bottom, diagonal, vertical, or horizontal of borders
     fn read_border<B: BufRead>(
         xml: &mut Reader<B>,
@@ -1480,41 +1522,7 @@ impl Stylesheet {
                     // BORDER (LRTB) nth-1
                     /////////////
                     Ok(Event::Empty(ref e)) if e.local_name().as_ref() == b"color" => {
-                        for attr in e.attributes() {
-                            if let Ok(a) = attr {
-                                match a.key {
-                                    QName(b"rgb") => {
-                                        border_region.color = Some(Stylesheet::to_rgb(
-                                            a.unescape_value()?.to_string(),
-                                        )?)
-                                    }
-                                    QName(b"theme") => {
-                                        border_region.color = Some(Color::Theme {
-                                            id: a.unescape_value()?.parse::<u32>()?,
-                                            tint: None,
-                                        });
-                                    }
-                                    QName(b"auto") => {
-                                        border_region.color =
-                                            Some(Color::Auto(a.unescape_value()?.parse::<u32>()?));
-                                    }
-                                    QName(b"indexed") => {
-                                        border_region.color =
-                                            Some(Color::Index(a.unescape_value()?.parse::<u32>()?))
-                                    }
-                                    QName(b"tint") => match border_region.color {
-                                        Some(Color::Theme { id, .. }) => {
-                                            border_region.color = Some(Color::Theme {
-                                                id,
-                                                tint: Some(a.unescape_value()?.to_string()),
-                                            })
-                                        }
-                                        _ => (),
-                                    },
-                                    _ => (),
-                                }
-                            }
-                        }
+                        border_region.color = Some(Stylesheet::read_color(e.attributes())?);
                     }
                     Ok(Event::End(ref e)) if e.local_name().as_ref() == region.name().as_ref() => {
                         return Ok(())
@@ -1710,35 +1718,7 @@ impl Stylesheet {
                     }
                 }
                 Ok(Event::Empty(ref e)) if e.local_name().as_ref() == b"color" => {
-                    for attr in e.attributes() {
-                        if let Ok(a) = attr {
-                            match a.key {
-                                QName(b"rgb") => {
-                                    font.color =
-                                        Stylesheet::to_rgb(a.unescape_value()?.to_string())?
-                                }
-                                QName(b"theme") => {
-                                    font.color = Color::Theme {
-                                        id: a.unescape_value()?.parse::<u32>()?,
-                                        tint: None,
-                                    };
-                                }
-                                QName(b"auto") => {
-                                    font.color = Color::Auto(a.unescape_value()?.parse::<u32>()?);
-                                }
-                                QName(b"tint") => match font.color {
-                                    Color::Theme { id, .. } => {
-                                        font.color = Color::Theme {
-                                            id,
-                                            tint: Some(a.unescape_value()?.to_string()),
-                                        }
-                                    }
-                                    _ => (),
-                                },
-                                _ => (),
-                            }
-                        }
-                    }
+                    font.color = Stylesheet::read_color(e.attributes())?;
                 }
                 Ok(Event::Empty(ref e)) if e.local_name().as_ref() == b"name" => {
                     for attr in e.attributes() {
@@ -1828,76 +1808,10 @@ impl Stylesheet {
                     }
                 }
                 Ok(Event::Empty(ref e)) if e.local_name().as_ref() == b"fgColor" => {
-                    for attr in e.attributes() {
-                        if let Ok(a) = attr {
-                            match a.key {
-                                QName(b"rgb") => {
-                                    fill.foreground =
-                                        Some(Stylesheet::to_rgb(a.unescape_value()?.to_string())?)
-                                }
-                                QName(b"theme") => {
-                                    fill.foreground = Some(Color::Theme {
-                                        id: a.unescape_value()?.parse::<u32>()?,
-                                        tint: None,
-                                    });
-                                }
-                                QName(b"auto") => {
-                                    fill.foreground =
-                                        Some(Color::Auto(a.unescape_value()?.parse::<u32>()?));
-                                }
-                                QName(b"indexed") => {
-                                    fill.foreground =
-                                        Some(Color::Index(a.unescape_value()?.parse::<u32>()?))
-                                }
-                                QName(b"tint") => match fill.foreground {
-                                    Some(Color::Theme { id, .. }) => {
-                                        fill.foreground = Some(Color::Theme {
-                                            id,
-                                            tint: Some(a.unescape_value()?.to_string()),
-                                        })
-                                    }
-                                    _ => (),
-                                },
-                                _ => (),
-                            }
-                        }
-                    }
+                    fill.foreground = Some(Stylesheet::read_color(e.attributes())?);
                 }
                 Ok(Event::Empty(ref e)) if e.local_name().as_ref() == b"bgColor" => {
-                    for attr in e.attributes() {
-                        if let Ok(a) = attr {
-                            match a.key {
-                                QName(b"rgb") => {
-                                    fill.background =
-                                        Some(Stylesheet::to_rgb(a.unescape_value()?.to_string())?);
-                                }
-                                QName(b"theme") => {
-                                    fill.background = Some(Color::Theme {
-                                        id: a.unescape_value()?.to_string().parse::<u32>()?,
-                                        tint: None,
-                                    });
-                                }
-                                QName(b"auto") => {
-                                    fill.background =
-                                        Some(Color::Auto(a.unescape_value()?.parse::<u32>()?));
-                                }
-                                QName(b"indexed") => {
-                                    fill.background =
-                                        Some(Color::Index(a.unescape_value()?.parse::<u32>()?))
-                                }
-                                QName(b"tint") => match fill.background {
-                                    Some(Color::Theme { id, .. }) => {
-                                        fill.background = Some(Color::Theme {
-                                            id,
-                                            tint: Some(a.unescape_value()?.to_string()),
-                                        })
-                                    }
-                                    _ => (),
-                                },
-                                _ => (),
-                            }
-                        }
-                    }
+                    fill.background = Some(Stylesheet::read_color(e.attributes())?);
                 }
                 Ok(Event::End(ref e)) if e.local_name().as_ref() == closing => return Ok(fill),
                 Ok(Event::Eof) => {
@@ -2715,6 +2629,5 @@ mod stylesheet_unittests {
             // Verify all data is written
             assert!(zip.finish().unwrap().into_inner().len() > 22);
         }
-
     }
 }
