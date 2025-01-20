@@ -51,6 +51,7 @@ pub(crate) enum Zoom {
     Z100,
     Z200,
 }
+
 impl Into<Vec<u8>> for Zoom {
     fn into(self) -> Vec<u8> {
         match self {
@@ -93,6 +94,8 @@ impl Pane {
         }
     }
 }
+
+// Location of pane within sheet
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub(crate) enum PanePosition {
     BottomRight,
@@ -108,6 +111,17 @@ pub(crate) enum PaneState {
     Split,
     FrozenSplit,
 }
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub(crate) enum PivotType {
+    #[default]
+    None,
+    Normal,
+    Data,
+    All,
+    Origin,
+    Button,
+    TopRight,
+}
 
 /// A sheet view selection view
 #[derive(Debug, Default, PartialEq, Clone, Eq)]
@@ -122,6 +136,110 @@ impl Selection {
         Self {
             sqref: vec![((0, 0), (0, 0))],
             cell_id: b"0".to_vec(),
+            ..Default::default()
+        }
+    }
+}
+/// Represents a selected field and item within its parent
+#[derive(Debug, Default, PartialEq, Clone, Eq)]
+pub(crate) struct Reference {
+    include_variance_filter: bool,
+    include_pop_variance_filter: bool,
+    include_sum_aggregate_filter: bool,
+    include_prod_aggregate_filter: bool,
+    include_min_aggregate_filter: bool,
+    include_avg_aggregate_filter: bool,
+    include_max_aggregate_filter: bool,
+    include_std_deviation_filter: bool,
+    include_pop_std_deviation_filter: bool,
+    include_default_filter: bool,
+    include_count_filter: bool,
+    include_counta_filter: bool,
+    selected: bool,
+    relative: bool,
+    by_position: bool,
+    field: Option<Vec<u8>>,
+    values: Vec<Vec<u8>>, // count attribute need to write and represents the length
+}
+impl Reference {
+    pub(crate) fn new() -> Self {
+        Self {
+            ..Default::default()
+        }
+    }
+}
+/// A rule to describe `PivotTable` selection
+#[derive(Debug, Default, PartialEq, Clone, Eq)]
+pub(crate) struct PivotArea {
+    references: Vec<Reference>, // count attribute need to write and represents the length
+    axis: Option<Axis>,
+    collapsed_are_subtotal: bool,
+    offset: CellRange,
+    outline: bool,
+    cache_index: bool,
+    include_col_total: bool,
+    include_row_total: bool,
+    use_label_only: bool,
+    use_data_only: bool,
+    pivot_type: PivotType,
+    field: Option<Vec<u8>>,
+    field_pos: Option<Vec<u8>>,
+}
+impl PivotArea {
+    pub(crate) fn new() -> Self {
+        Self {
+            outline: true,
+            ..Default::default()
+        }
+    }
+}
+/// Axis on a `PivotTable`
+#[derive(Debug, Default, PartialEq, Clone, Eq)]
+pub(crate) enum Axis {
+    #[default]
+    AxisRow,
+    AxisCol,
+    AxisPage,
+    AxisValues,
+}
+
+/// Selections found within a `PivotTable`
+#[derive(Debug, Default, PartialEq, Clone, Eq)]
+pub(crate) struct PivotSelection {
+    col: Vec<u8>,
+    row: Vec<u8>,
+    axis: Option<Axis>,
+    click: Vec<u8>,
+    count: Vec<u8>,
+    data: bool,
+    extendable: bool,
+    label: bool,
+    show_header: bool,
+    dimension: Vec<u8>,
+    max: Vec<u8>,
+    min: Vec<u8>,
+    pane: PanePosition,
+    rid: Option<Vec<u8>>,
+    prev_col: Vec<u8>,
+    prev_row: Vec<u8>,
+    start: Vec<u8>,
+    area: PivotArea,
+}
+
+impl PivotSelection {
+    pub(crate) fn new() -> Self {
+        Self {
+            area: todo!(),
+            col: b"0".to_vec(),
+            row: b"0".to_vec(),
+            click: b"0".to_vec(),
+            count: b"0".to_vec(),
+            dimension: b"0".to_vec(),
+            max: b"0".to_vec(),
+            min: b"0".to_vec(),
+            prev_col: b"0".to_vec(),
+            prev_row: b"0".to_vec(),
+            start: b"0".to_vec(),
             ..Default::default()
         }
     }
@@ -146,6 +264,7 @@ pub(crate) struct SheetView {
     use_rtl: bool,
     pane: Option<Pane>,
     selection: Option<Selection>,
+    pivot_selection: Option<PivotSelection>,
     show_header: bool,
     show_outline_symbol: bool,
 }
@@ -444,11 +563,14 @@ impl Sheet {
                     }
                 }
                 ////////////////////
-                // SHEET PROPERTIES nth-1
+                // TAB COLOR
                 /////////////
                 Ok(Event::Empty(ref e)) if e.local_name().as_ref() == b"tabColor" => {
                     self.tab_color = Some(Stylesheet::read_color(e.attributes())?);
                 }
+                ////////////////////
+                // PAGE SETUP PROPERTIES
+                /////////////
                 Ok(Event::Empty(ref e)) if e.local_name().as_ref() == b"pageSetUpPr" => {
                     for attr in e.attributes() {
                         if let Ok(a) = attr {
@@ -460,6 +582,9 @@ impl Sheet {
                         }
                     }
                 }
+                ////////////////////
+                // OUTLINE PROPERTIES
+                /////////////
                 Ok(Event::Empty(ref e)) if e.local_name().as_ref() == b"outlinePr" => {
                     for attr in e.attributes() {
                         if let Ok(a) = attr {
@@ -475,6 +600,7 @@ impl Sheet {
                         }
                     }
                 }
+
                 Ok(Event::End(ref e)) if e.local_name().as_ref() == b"sheetPr" => break,
                 Ok(Event::Eof) => return Err(XlsxError::XmlEof("sheetPr".into())),
                 Err(e) => return Err(XlsxError::Xml(e)),
@@ -755,11 +881,11 @@ impl Sheet {
                                     loop {
                                         view_value_buf.clear();
                                         match xml.read_event_into(&mut view_value_buf) {
-                                            Ok(Event::Empty(ref e))
                                             ////////////////////
                                             // Pane
                                             /////////////
-                                            if e.local_name().as_ref() == b"pane" =>
+                                            Ok(Event::Empty(ref e))
+                                                if e.local_name().as_ref() == b"pane" =>
                                             {
                                                 let mut pane = Pane::new();
                                                 for attr in e.attributes() {
@@ -771,7 +897,8 @@ impl Sheet {
                                                                         pane.active_pane =
                                                                             PanePosition::BottomLeft
                                                                     }
-                                                                    b"bottomRight" => pane.active_pane =
+                                                                    b"bottomRight" => pane
+                                                                        .active_pane =
                                                                         PanePosition::BottomRight,
                                                                     b"topLeft" => {
                                                                         pane.active_pane =
@@ -814,10 +941,11 @@ impl Sheet {
                                                         }
                                                     }
                                                 }
+
                                                 sheet_view.pane = Some(pane)
                                             }
-                                                                                        ////////////////////
-                                            // Pane
+                                            ////////////////////
+                                            // Selection
                                             /////////////
                                             Ok(Event::Start(ref e))
                                                 if e.local_name().as_ref() == b"selection" =>
@@ -826,32 +954,34 @@ impl Sheet {
                                                 for attr in e.attributes() {
                                                     if let Ok(a) = attr {
                                                         match a.key.as_ref() {
-                                                            b"pane" => {
-                                                                match a.value.as_ref() {
-                                                                    b"bottomLeft" => {
-                                                                        selection.pane =
-                                                                            PanePosition::BottomLeft
-                                                                    }
-                                                                    b"bottomRight" => selection.pane =
-                                                                        PanePosition::BottomRight,
-                                                                    b"topLeft" => {
-                                                                        selection.pane =
-                                                                            PanePosition::TopLeft
-                                                                    }
-                                                                    b"topRight" => {
-                                                                        selection.pane =
-                                                                            PanePosition::TopRight
-                                                                    }
-                                                                    _ => (),
+                                                            b"pane" => match a.value.as_ref() {
+                                                                b"bottomLeft" => {
+                                                                    selection.pane =
+                                                                        PanePosition::BottomLeft
                                                                 }
-                                                            }
+                                                                b"bottomRight" => {
+                                                                    selection.pane =
+                                                                        PanePosition::BottomRight
+                                                                }
+                                                                b"topLeft" => {
+                                                                    selection.pane =
+                                                                        PanePosition::TopLeft
+                                                                }
+                                                                b"topRight" => {
+                                                                    selection.pane =
+                                                                        PanePosition::TopRight
+                                                                }
+                                                                _ => (),
+                                                            },
                                                             b"activeCellId" => {
-                                                                selection.cell_id =
-                                                                    a.value.into();
+                                                                selection.cell_id = a.value.into();
                                                             }
                                                             b"activeCell" => {
-                                                                selection.cell =
-                                                                    Some(Sheet::cell_reference_to_cell(&a.value)?);
+                                                                selection.cell = Some(
+                                                                    Sheet::cell_reference_to_cell(
+                                                                        &a.value,
+                                                                    )?,
+                                                                );
                                                             }
                                                             b"sqref" => {
                                                                 selection.sqref = Sheet::cell_group_to_list_cell_range(&a.value)?;
@@ -862,6 +992,358 @@ impl Sheet {
                                                     }
                                                 }
                                                 sheet_view.selection = Some(selection)
+                                            }
+                                            ////////////////////
+                                            // PIVOT SELECTION
+                                            /////////////
+                                            Ok(Event::Start(ref e))
+                                                if e.local_name().as_ref() == b"pivotSelection" =>
+                                            {
+                                                let mut pivot = PivotSelection::new();
+                                                for attr in e.attributes() {
+                                                    if let Ok(a) = attr {
+                                                        match a.key.as_ref() {
+                                                            b"pane" => {
+                                                                match a.value.as_ref() {
+                                                                    b"bottomLeft" => {
+                                                                        pivot.pane =
+                                                                            PanePosition::BottomLeft
+                                                                    }
+                                                                    b"bottomRight" => pivot.pane =
+                                                                        PanePosition::BottomRight,
+                                                                    b"topLeft" => {
+                                                                        pivot.pane =
+                                                                            PanePosition::TopLeft
+                                                                    }
+                                                                    b"topRight" => {
+                                                                        pivot.pane =
+                                                                            PanePosition::TopRight
+                                                                    }
+                                                                    _ => (),
+                                                                }
+                                                            }
+                                                            b"showHeader" => {
+                                                                pivot.show_header =
+                                                                    *a.value == *b"1";
+                                                            }
+                                                            b"label" => {
+                                                                pivot.label = *a.value == *b"1";
+                                                            }
+                                                            b"data" => {
+                                                                pivot.data = *a.value == *b"1";
+                                                            }
+                                                            b"extendable" => {
+                                                                pivot.extendable =
+                                                                    *a.value == *b"1";
+                                                            }
+                                                            b"dimension" => {
+                                                                pivot.dimension = a.value.into();
+                                                            }
+                                                            b"start" => {
+                                                                pivot.start = a.value.into();
+                                                            }
+                                                            b"min" => {
+                                                                pivot.min = a.value.into();
+                                                            }
+                                                            b"max" => {
+                                                                pivot.max = a.value.into();
+                                                            }
+                                                            b"activeRow" => {
+                                                                pivot.row = a.value.into();
+                                                            }
+                                                            b"activeCol" => {
+                                                                pivot.col = a.value.into();
+                                                            }
+                                                            b"previousRow" => {
+                                                                pivot.prev_row = a.value.into();
+                                                            }
+                                                            b"previousCol" => {
+                                                                pivot.prev_col = a.value.into();
+                                                            }
+                                                            b"click" => {
+                                                                pivot.click = a.value.into();
+                                                            }
+                                                            b"r:id" => {
+                                                                pivot.rid = Some(a.value.into());
+                                                            }
+                                                            b"axis" => match a.value.as_ref() {
+                                                                b"axisCol" => {
+                                                                    pivot.axis = Some(Axis::AxisCol)
+                                                                }
+                                                                b"axisPage" => {
+                                                                    pivot.axis =
+                                                                        Some(Axis::AxisPage)
+                                                                }
+                                                                b"axisRow" => {
+                                                                    pivot.axis = Some(Axis::AxisRow)
+                                                                }
+                                                                b"axisValues" => {
+                                                                    pivot.axis =
+                                                                        Some(Axis::AxisValues)
+                                                                }
+                                                                _ => (),
+                                                            },
+
+                                                            _ => (),
+                                                        }
+                                                    }
+                                                }
+
+                                                /////////////////////
+                                                //// PIVOT AREA
+                                                ///////////////
+                                                let mut area_buf = Vec::with_capacity(1024);
+                                                loop {
+                                                    let mut area = PivotArea::new();
+                                                    area_buf.clear();
+                                                    match xml.read_event_into(&mut area_buf) {
+                                                        Ok(Event::Start(ref e))
+                                                            if e.local_name().as_ref()
+                                                                == b"pivotArea" =>
+                                                        {
+                                                            for attr in e.attributes() {
+                                                                if let Ok(a) = attr {
+                                                                    match a.key.as_ref() {
+                                                                        b"field" => {
+                                                                            area.field = Some(
+                                                                                a.value.to_vec(),
+                                                                            )
+                                                                        }
+                                                                        b"type" => {
+                                                                            match a.value.as_ref() {
+                                                                                b"all" => area
+                                                                                    .pivot_type =
+                                                                                    PivotType::All,
+                                                                                b"button" => area
+                                                                                    .pivot_type =
+                                                                                    PivotType::Button,
+                                                                                b"data" => area
+                                                                                    .pivot_type =
+                                                                                    PivotType::Data,
+                                                                                b"none" => area
+                                                                                    .pivot_type =
+                                                                                    PivotType::None,
+                                                                                b"normal" => area
+                                                                                    .pivot_type =
+                                                                                    PivotType::Normal,
+                                                                                b"origin" => area
+                                                                                    .pivot_type =
+                                                                                    PivotType::Origin,
+                                                                                b"topRight" => area
+                                                                                    .pivot_type =
+                                                                                    PivotType::TopRight,
+                                                                                _ => (),
+                                                                            }
+                                                                        }
+                                                                        b"dataOnly" => {
+                                                                            area.use_data_only =
+                                                                                *a.value == *b"1"
+                                                                        }
+                                                                        b"labelOnly" => {
+                                                                            area.use_label_only =
+                                                                                *a.value == *b"1"
+                                                                        }
+                                                                        b"grandRow" => {
+                                                                            area.include_row_total =
+                                                                                *a.value == *b"1"
+                                                                        }
+                                                                        b"grandCol" => {
+                                                                            area.include_col_total =
+                                                                                *a.value == *b"1"
+                                                                        }
+                                                                        b"cacheIndex" => {
+                                                                            area.cache_index =
+                                                                                *a.value == *b"1"
+                                                                        }
+                                                                        b"outline" => {
+                                                                            area.outline =
+                                                                                *a.value == *b"1"
+                                                                        }
+                                                                        b"offset" => {
+                                                                            let offset = Sheet::cell_reference_to_cell_range(&a.value)?;
+                                                                            area.offset = offset;
+                                                                        }
+                                                                        // This binary string breaks rustfmt with line length
+                                                                        b"collapsedLevelsAreSubtotals" => {
+                                                                            area.collapsed_are_subtotal = *a.value == *b"1";
+                                                                        }
+                                                                        b"axis" => {
+                                                                            match a.value.as_ref() {
+                                                                                b"axisCol" =>  area.axis = Some(Axis::AxisCol),
+                                                                                b"axisPage" => area.axis = Some(Axis::AxisPage),
+                                                                                b"axisRow" => area.axis = Some(Axis::AxisRow),
+                                                                                b"axisValues" =>  area.axis = Some(Axis::AxisValues),
+                                                                                _ => ()
+                                                                            }
+                                                                        }
+                                                                        b"fieldPosition" => {
+                                                                            area.field_pos = Some(
+                                                                                a.value.to_vec(),
+                                                                            )
+                                                                        }
+                                                                        _ => (),
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                        //////////////////
+                                                        //// REFERENCE
+                                                        //////////////
+                                                        Ok(Event::Start(ref e))
+                                                            if e.local_name().as_ref()
+                                                                == b"reference" =>
+                                                        {
+                                                            let mut reference = Reference::new();
+                                                            for attr in e.attributes() {
+                                                                if let Ok(a) = attr {
+                                                                    match a.key.as_ref() {
+                                                                        b"field" => {
+                                                                            reference.field =
+                                                                                Some(a.value.to_vec())
+                                                                        }
+                                                                        b"selected" => {
+                                                                            reference.selected =
+                                                                                *a.value == *b"1";
+                                                                        }
+                                                                        b"byPosition" => {
+                                                                            reference.selected =
+                                                                                *a.value == *b"1";
+                                                                        }
+                                                                        b"relative" => {
+                                                                            reference.relative =
+                                                                                *a.value == *b"1";
+                                                                        }
+                                                                        b"defaultSubtotal" => {
+                                                                            reference.include_default_filter =
+                                                                                *a.value == *b"1";
+                                                                        }
+                                                                        b"sumSubtotal" => {
+                                                                            reference.include_sum_aggregate_filter =
+                                                                                *a.value == *b"1";
+                                                                        }
+                                                                        b"countASubtotal" => {
+                                                                            reference.include_counta_filter =
+                                                                                *a.value == *b"1";
+                                                                        }
+                                                                        b"avgSubtotal" => {
+                                                                            reference.include_avg_aggregate_filter =
+                                                                                *a.value == *b"1";
+                                                                        }
+                                                                        b"maxSubtotal" => {
+                                                                            reference.include_max_aggregate_filter =
+                                                                                *a.value == *b"1";
+                                                                        }
+                                                                        b"minSubtotal" => {
+                                                                            reference.include_min_aggregate_filter =
+                                                                                *a.value == *b"1";
+                                                                        }
+                                                                        b"productSubtotal" => {
+                                                                            reference.include_prod_aggregate_filter =
+                                                                                *a.value == *b"1";
+                                                                        }
+                                                                        b"countSubtotal" => {
+                                                                            reference.include_count_filter =
+                                                                                *a.value == *b"1";
+                                                                        }
+                                                                        b"stdDevSubtotal" => {
+                                                                            reference.include_std_deviation_filter =
+                                                                                *a.value == *b"1";
+                                                                        }
+                                                                        b"stdDevPSubtotal" => {
+                                                                            reference.include_pop_std_deviation_filter =
+                                                                                *a.value == *b"1";
+                                                                        }
+                                                                        b"varSubtotal" => {
+                                                                            reference.include_variance_filter =
+                                                                                *a.value == *b"1";
+                                                                        }
+                                                                        b"varPSubtotal" => {
+                                                                            reference.include_pop_variance_filter =
+                                                                                *a.value == *b"1";
+                                                                        }
+                                                                        _ => (),
+                                                                    }
+                                                                }
+                                                            }
+                                                            let mut ref_buf =
+                                                                Vec::with_capacity(1024);
+                                                            //////////////////
+                                                            //// REFERENCE nth-1
+                                                            //////////////
+                                                            loop {
+                                                                ref_buf.clear();
+                                                                match xml
+                                                                    .read_event_into(&mut ref_buf)
+                                                                {
+                                                                    //////////////////
+                                                                    //// REFERENCE SHARED VALUE
+                                                                    //////////////
+                                                                    Ok(Event::Empty(ref e))
+                                                                        if e.local_name()
+                                                                            .as_ref()
+                                                                            == b"x" =>
+                                                                    {
+                                                                        //////////////////
+                                                                        //// SHARED VALUE
+                                                                        //////////////
+                                                                        for attr in e.attributes() {
+                                                                            if let Ok(a) = attr {
+                                                                                match a.key.as_ref() {
+                                                                                            b"v" => {
+                                                                                                reference.values.push(
+                                                                                                    a.value.to_vec()
+                                                                                                )
+                                                                                            },
+                                                                                            _ => ()
+                                                                                        }
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                    Ok(Event::End(ref e))
+                                                                        if e.local_name()
+                                                                            .as_ref()
+                                                                            == b"reference" =>
+                                                                    {
+                                                                        pivot
+                                                                            .area
+                                                                            .references
+                                                                            .push(reference);
+                                                                        break;
+                                                                    }
+                                                                    Ok(Event::Eof) => {
+                                                                        return Err(
+                                                                            XlsxError::XmlEof(
+                                                                                "reference".into(),
+                                                                            ),
+                                                                        )
+                                                                    }
+                                                                    Err(e) => {
+                                                                        return Err(
+                                                                            XlsxError::Xml(e),
+                                                                        );
+                                                                    }
+                                                                    _ => (),
+                                                                }
+                                                            }
+                                                        }
+                                                        Ok(Event::End(ref e))
+                                                            if e.local_name().as_ref()
+                                                                == b"pivotArea" =>
+                                                        {
+                                                            pivot.area = area;
+                                                            break;
+                                                        }
+                                                        Ok(Event::Eof) => {
+                                                            return Err(XlsxError::XmlEof(
+                                                                "pivotArea".into(),
+                                                            ))
+                                                        }
+                                                        Err(e) => {
+                                                            return Err(XlsxError::Xml(e));
+                                                        }
+                                                        _ => (),
+                                                    }
+                                                }
                                             }
                                             Ok(Event::End(ref e))
                                                 if e.local_name().as_ref() == b"sheetView" =>
@@ -1049,25 +1531,28 @@ mod sheet_unittests {
     }
 
     mod sheet_api {
+        use super::init;
+        use crate::stream::xlsx::sheet::{Color, GridlineColor, Sheet};
         use std::{
             fs::File,
             io::{Seek, SeekFrom},
         };
 
-        use super::init;
-        use crate::stream::xlsx::sheet::{Color, GridlineColor, Sheet};
-
         #[test]
         fn test_cell_group_to_list_cell_range() {
-            let actual = Sheet::cell_group_to_list_cell_range(&"A1:B2 D4:D5 F10".as_bytes().to_vec()).unwrap();
-            assert_eq!(actual[0], ((0, 0), (1,1)));
-            assert_eq!(actual[1], ((3, 3), (3,4)));
-            assert_eq!(actual[2], ((5, 9), (5,9)));
+            let actual =
+                Sheet::cell_group_to_list_cell_range(&"A1:B2 D4:D5 F10".as_bytes().to_vec())
+                    .unwrap();
+            assert_eq!(actual[0], ((0, 0), (1, 1)));
+            assert_eq!(actual[1], ((3, 3), (3, 4)));
+            assert_eq!(actual[2], ((5, 9), (5, 9)));
         }
 
         #[test]
         fn test_list_cell_range_to_cell_group() {
-            let actual = Sheet::cell_group_to_list_cell_range(&"A1:B2 D4:D5 F10".as_bytes().to_vec()).unwrap();
+            let actual =
+                Sheet::cell_group_to_list_cell_range(&"A1:B2 D4:D5 F10".as_bytes().to_vec())
+                    .unwrap();
             let actual = Sheet::list_cell_range_to_cell_group(&actual);
             assert_eq!(actual, "A1:B2 D4:D5 F10:F10".as_bytes().to_vec());
         }
