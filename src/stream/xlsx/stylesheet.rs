@@ -42,15 +42,15 @@ impl ToString for Rgb {
 /// Default is equivalent to `black`
 #[derive(Debug, PartialEq, Clone, Eq, PartialOrd, Hash, Ord)]
 pub(crate) enum Color {
-    /// Builtin theme from excel color palette selector which includes theme id and tint value
-    Theme {
-        id: u32,
-        tint: Option<String>,
-    },
+    /// Index for color scheme referencing theme
+    // Reference the clrscheme for a particular sysClr or srgbClr in Theme part
+    Theme { id: u32, tint: Option<String> },
     /// RGB color model
-    Rgb(Rgb),
-    Index(u32),
-    Auto(u32),
+    Rgb { value: Rgb, tint: Option<String> },
+    /// Index colors only used for backwards compatibility
+    Index { id: u32, tint: Option<String> },
+    /// Uses system dependent color
+    Auto(Option<String>),
 }
 impl Default for Color {
     fn default() -> Self {
@@ -74,16 +74,33 @@ impl<W: Write> XmlWriter<W> for Color {
                     Ok(writer.write_empty()?)
                 }
             }
-            Color::Rgb(rgb) => {
-                let writer = writer.with_attribute(("rgb", rgb.to_string().as_str()));
+            Color::Rgb { value, tint } => {
+                let mut attrs = Vec::with_capacity(2);
+                let rgb = value.to_string();
+                attrs.push(("rgb", rgb.as_str()));
+                if let Some(tint) = tint {
+                    attrs.push(("tint", tint))
+                }
+                let writer = writer.with_attributes(attrs);
                 Ok(writer.write_empty()?)
             }
-            Color::Index(idx) => {
-                let writer = writer.with_attribute(("indexed", idx.to_string().as_str()));
+            Color::Index { id, tint } => {
+                let mut attrs = Vec::with_capacity(2);
+                let id = id.to_string();
+                attrs.push(("indexed", id.as_str()));
+                if let Some(tint) = tint {
+                    attrs.push(("tint", tint))
+                }
+                let writer = writer.with_attributes(attrs);
                 Ok(writer.write_empty()?)
             }
-            Color::Auto(val) => {
-                let writer = writer.with_attribute(("auto", val.to_string().as_str()));
+            Color::Auto(tint) => {
+                let mut attrs = Vec::with_capacity(2);
+                attrs.push(("auto", "1"));
+                if let Some(tint) = tint {
+                    attrs.push(("tint", tint))
+                }
+                let writer = writer.with_attributes(attrs);
                 Ok(writer.write_empty()?)
             }
         }
@@ -1426,30 +1443,50 @@ impl Stylesheet {
         let mut color = Color::default();
         for attr in attributes {
             if let Ok(a) = attr {
-                match a.key {
-                    QName(b"rgb") => {
-                        color = Stylesheet::to_rgb(a.unescape_value()?.to_string())?;
+                match a.key.as_ref() {
+                    b"rgb" => {
+                        color = Color::Rgb {
+                            value: Stylesheet::to_rgb(a.unescape_value()?.to_string())?,
+                            tint: None,
+                        };
                     }
-                    QName(b"theme") => {
+                    b"theme" => {
                         color = Color::Theme {
                             id: a.unescape_value()?.parse::<u32>()?,
                             tint: None,
                         };
                     }
-                    QName(b"auto") => {
-                        color = Color::Auto(a.unescape_value()?.parse::<u32>()?);
+                    b"auto" => {
+                        color = Color::Auto(None);
                     }
-                    QName(b"indexed") => {
-                        color = Color::Index(a.unescape_value()?.parse::<u32>()?);
+                    b"indexed" => {
+                        color = Color::Index {
+                            id: a.unescape_value()?.parse::<u32>()?,
+                            tint: None,
+                        }
                     }
-                    QName(b"tint") => match color {
+                    b"tint" => match color {
                         Color::Theme { id, .. } => {
                             color = Color::Theme {
                                 id,
                                 tint: Some(a.unescape_value()?.to_string()),
                             };
                         }
-                        _ => (),
+                        Color::Index { id, .. } => {
+                            color = Color::Index {
+                                id,
+                                tint: Some(a.unescape_value()?.to_string()),
+                            };
+                        }
+                        Color::Rgb { value, .. } => {
+                            color = Color::Rgb {
+                                value,
+                                tint: Some(a.unescape_value()?.to_string()),
+                            };
+                        }
+                        Color::Auto(_) => {
+                            color = Color::Auto(Some(a.unescape_value()?.to_string()))
+                        }
                     },
                     _ => (),
                 }
@@ -1817,13 +1854,13 @@ impl Stylesheet {
     }
 
     /// Convert from hexadecimal to a tuple of RGB model
-    pub(crate) fn to_rgb(value: String) -> Result<Color, XlsxError> {
+    pub(crate) fn to_rgb(value: String) -> Result<Rgb, XlsxError> {
         // The first two letter are ignored since they response to alpha
         let base16 = 16u32;
         let red = u8::from_str_radix(&value[2..4], base16)?;
         let green = u8::from_str_radix(&value[4..6], base16)?;
         let blue = u8::from_str_radix(&value[6..8], base16)?;
-        Ok(Color::Rgb(Rgb::Custom(red, green, blue)))
+        Ok(Rgb::Custom(red, green, blue))
     }
 
     /// Convert from u8 to a hexadecimal of RGB model scale
@@ -1874,7 +1911,7 @@ mod stylesheet_unittests {
         #[test]
         fn test_to_rgb() {
             let result = Stylesheet::to_rgb("FF573345".into()).unwrap();
-            assert_eq!(result, Color::Rgb(Rgb::Custom(87, 51, 69)));
+            assert_eq!(result, Rgb::Custom(87, 51, 69));
         }
 
         #[test]
@@ -1951,21 +1988,30 @@ mod stylesheet_unittests {
                             border.left,
                             BorderRegion {
                                 style: Some(BorderStyle::Double),
-                                color: Some(Color::Rgb(Rgb::Custom(35, 69, 103)))
+                                color: Some(Color::Rgb {
+                                    value: Rgb::Custom(35, 69, 103),
+                                    tint: None
+                                })
                             }
                         );
                         assert_eq!(
                             border.right,
                             BorderRegion {
                                 style: Some(BorderStyle::Thick),
-                                color: Some(Color::Rgb(Rgb::Custom(35, 69, 103)))
+                                color: Some(Color::Rgb {
+                                    value: Rgb::Custom(35, 69, 103),
+                                    tint: None
+                                })
                             }
                         );
                         assert_eq!(
                             border.top,
                             BorderRegion {
                                 style: Some(BorderStyle::Thin),
-                                color: Some(Color::Rgb(Rgb::Custom(35, 69, 103)))
+                                color: Some(Color::Rgb {
+                                    value: Rgb::Custom(35, 69, 103),
+                                    tint: None
+                                })
                             }
                         );
                         assert_eq!(
@@ -2411,8 +2457,14 @@ mod stylesheet_unittests {
                             actual,
                             Fill {
                                 r#type: PatternFill::Solid,
-                                foreground: Some(Color::Rgb(Rgb::Custom(67, 86, 120))),
-                                background: Some(Color::Rgb(Rgb::Custom(67, 35, 120)))
+                                foreground: Some(Color::Rgb {
+                                    value: Rgb::Custom(67, 86, 120),
+                                    tint: None
+                                }),
+                                background: Some(Color::Rgb {
+                                    value: Rgb::Custom(67, 35, 120),
+                                    tint: None
+                                }),
                             }
                         );
 
@@ -2442,7 +2494,10 @@ mod stylesheet_unittests {
                     number_format: None,
                     font: Arc::new(FontProperty {
                         size: "11".into(),
-                        color: Color::Rgb(Rgb::Custom(156, 0, 6,)),
+                        color: Color::Rgb {
+                            value: Rgb::Custom(156, 0, 6),
+                            tint: None
+                        },
                         font: "Calibri".into(),
                         family: 2,
                         scheme: "minor".into(),
@@ -2450,7 +2505,10 @@ mod stylesheet_unittests {
                     }),
                     fill: Arc::new(Fill {
                         r#type: PatternFill::Solid,
-                        foreground: Some(Color::Rgb(Rgb::Custom(255, 199, 206))),
+                        foreground: Some(Color::Rgb {
+                            value: Rgb::Custom(255, 199, 206),
+                            tint: None
+                        }),
                         ..Default::default()
                     }),
                     border: Arc::new(Border {
@@ -2563,7 +2621,11 @@ mod stylesheet_unittests {
                 actual,
                 Some(Arc::new(Fill {
                     r#type: PatternFill::Solid,
-                    foreground: Some(Color::Rgb(Rgb::Custom(255, 199, 206))),
+                    foreground: Some(Color::Rgb {
+                        value: Rgb::Custom(255, 199, 206),
+                        tint: None
+                    }),
+
                     background: None
                 }))
             )

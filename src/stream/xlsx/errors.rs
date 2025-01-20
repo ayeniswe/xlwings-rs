@@ -24,6 +24,9 @@ pub enum XlsxError {
     /// The `std::io` error wrapper
     #[error(transparent)]
     StdErr(#[from] std::io::Error),
+    /// The `std::string` utf8 error wrapper
+    #[error(transparent)]
+    Utf8(#[from] std::string::FromUtf8Error),
     /// The `std::char` int error wrapper
     #[error(transparent)]
     ParseChar(#[from] std::char::ParseCharError),

@@ -535,7 +535,10 @@ mod shared_string_unittests {
                 StringPiece {
                     props: Some(FontProperty {
                         size: "11".into(),
-                        color: Color::Rgb(Rgb::Custom(186, 155, 203)),
+                        color: Color::Rgb {
+                            value: Rgb::Custom(186, 155, 203),
+                            tint: None,
+                        },
                         font: "Calibri".into(),
                         family: 2,
                         scheme: "minor".into(),
@@ -683,7 +686,10 @@ mod shared_string_unittests {
                 StringPiece {
                     props: Some(FontProperty {
                         size: "11".into(),
-                        color: Color::Rgb(Rgb::Custom(186, 155, 203)),
+                        color: Color::Rgb {
+                            value: Rgb::Custom(186, 155, 203),
+                            tint: None,
+                        },
                         font: "Calibrri".into(),
                         family: 2,
                         scheme: "minor".into(),
