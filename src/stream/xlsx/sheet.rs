@@ -8,6 +8,7 @@ use crate::{
     stream::utils::{xml_reader, Key, Save, XmlWriter},
 };
 use bimap::{BiBTreeMap, BiHashMap, BiMap};
+use derive::XmlWriter;
 use num_enum::{FromPrimitive, IntoPrimitive};
 use quick_xml::{
     events::{BytesDecl, BytesStart, Event},
@@ -99,52 +100,52 @@ impl Pane {
     }
 }
 
-impl<W: Write> XmlWriter<W> for Pane {
-    fn write_xml<'a>(
-        &self,
-        writer: &'a mut Writer<W>,
-        tag_name: &'a str,
-    ) -> Result<&'a mut Writer<W>, XlsxError> {
-        let mut attrs = Vec::with_capacity(5);
-        if self.x_split != b"0" {
-            attrs.push((b"xSplit".as_ref(), self.x_split.as_ref()));
-        }
-        if self.y_split != b"0" {
-            attrs.push((b"ySplit".as_ref(), self.y_split.as_ref()));
-        }
-        let cell_ref;
-        if let Some(ref cell) = self.top_left_cell {
-            cell_ref = Sheet::cell_to_cell_reference(*cell);
-            attrs.push((b"topLeftCell".as_ref(), cell_ref.as_ref()));
-        }
-        if self.active_pane != PanePosition::default() {
-            attrs.push((
-                b"activePane".as_ref(),
-                match self.active_pane {
-                    PanePosition::BottomRight => b"bottomRight".as_ref(),
-                    PanePosition::TopRight => b"topRight".as_ref(),
-                    PanePosition::BottomLeft => b"bottomLeft".as_ref(),
-                    PanePosition::TopLeft => b"topLeft".as_ref(),
-                },
-            ));
-        }
-        if self.state != PaneState::default() {
-            attrs.push((
-                b"state".as_ref(),
-                match self.state {
-                    PaneState::Frozen => b"frozen".as_ref(),
-                    PaneState::Split => b"split".as_ref(),
-                    PaneState::FrozenSplit => b"frozenSplit".as_ref(),
-                },
-            ));
-        }
-        writer
-            .create_element(tag_name)
-            .with_attributes(attrs)
-            .write_empty()?;
-        Ok(writer)
-    }
-}
+// impl<W: Write> XmlWriter<W> for Pane {
+//     fn write_xml<'a>(
+//         &self,
+//         writer: &'a mut Writer<W>,
+//         tag_name: &'a str,
+//     ) -> Result<&'a mut Writer<W>, XlsxError> {
+//         let mut attrs = Vec::with_capacity(5);
+//         if self.x_split != b"0" {
+//             attrs.push((b"xSplit".as_ref(), self.x_split.as_ref()));
+//         }
+//         if self.y_split != b"0" {
+//             attrs.push((b"ySplit".as_ref(), self.y_split.as_ref()));
+//         }
+//         let cell_ref;
+//         if let Some(ref cell) = self.top_left_cell {
+//             cell_ref = Sheet::cell_to_cell_reference(*cell);
+//             attrs.push((b"topLeftCell".as_ref(), cell_ref.as_ref()));
+//         }
+//         if self.active_pane != PanePosition::default() {
+//             attrs.push((
+//                 b"activePane".as_ref(),
+//                 match self.active_pane {
+//                     PanePosition::BottomRight => b"bottomRight".as_ref(),
+//                     PanePosition::TopRight => b"topRight".as_ref(),
+//                     PanePosition::BottomLeft => b"bottomLeft".as_ref(),
+//                     PanePosition::TopLeft => b"topLeft".as_ref(),
+//                 },
+//             ));
+//         }
+//         if self.state != PaneState::default() {
+//             attrs.push((
+//                 b"state".as_ref(),
+//                 match self.state {
+//                     PaneState::Frozen => b"frozen".as_ref(),
+//                     PaneState::Split => b"split".as_ref(),
+//                     PaneState::FrozenSplit => b"frozenSplit".as_ref(),
+//                 },
+//             ));
+//         }
+//         writer
+//             .create_element(tag_name)
+//             .with_attributes(attrs)
+//             .write_empty()?;
+//         Ok(writer)
+//     }
+// }
 
 // Location of pane within sheet
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -588,9 +589,9 @@ impl<W: Write> XmlWriter<W> for Sheet {
                         .with_attributes(attrs)
                         .write_inner_content::<_, XlsxError>(|writer| {
                             // pane
-                            if let Some(ref pane) = view.pane {
-                                pane.write_xml(writer, "pane")?;
-                            }
+                            // if let Some(ref pane) = view.pane {
+                            //     pane.write_xml(writer, "pane")?;
+                            // }
                             // // selection
                             // if let Some(ref selection) = view.selection {
                             //     selection.write_xml(writer, "selection")?;
@@ -1790,4 +1791,34 @@ mod sheet_unittests {
             // );
         }
     }
+}
+
+#[derive(XmlWriter)]
+#[xml(name = "ex")]
+struct Example {
+    #[xml(name = "activePane")]
+    active_pane: bool,
+    #[xml(default_bool = true)]
+    x_split: bool,
+    value_test: Vec<u8>,
+    #[xml(default_bytes = b"test")]
+    open_win: Vec<u8>,
+}
+
+#[test]
+fn test_xml_writer_derive() {
+    let sheet = Example {
+        active_pane: false,
+        x_split: true,
+        value_test: b"01234".to_vec(),
+        open_win: b"test".to_vec(),
+    };
+
+    let mut buffer = Cursor::new(Vec::new());
+    let mut writer = Writer::new(&mut buffer);
+    let _ = sheet.write_xml(&mut writer, "sheet");
+
+    let xml_output = String::from_utf8(buffer.into_inner()).unwrap();
+    let expected_output = r#"<ex activePane="0" value_test="01234"/>"#;
+    assert_eq!(xml_output, expected_output);
 }

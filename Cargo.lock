@@ -174,6 +174,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "derive"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "derive_arbitrary"
 version = "1.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -613,6 +622,7 @@ name = "xcelmate"
 version = "0.1.0"
 dependencies = [
  "bimap",
+ "derive",
  "num_enum",
  "quick-xml",
  "serde",
