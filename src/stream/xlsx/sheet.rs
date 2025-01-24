@@ -44,22 +44,26 @@ const MAX_ROWS: u32 = 1_048_576;
 /// Predefined zoom level for a sheet
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub(crate) enum Zoom {
+    Z0,
     Z25,
     Z50,
     Z75,
     #[default]
     Z100,
     Z200,
+    Z400,
 }
 
 impl Into<Vec<u8>> for Zoom {
     fn into(self) -> Vec<u8> {
         match self {
-            Zoom::Z25 => vec![b'2', b'5'],
-            Zoom::Z50 => vec![b'5', b'0'],
-            Zoom::Z75 => vec![b'7', b'5'],
-            Zoom::Z100 => vec![b'1', b'0', b'0'],
-            Zoom::Z200 => vec![b'2', b'0', b'0'],
+            Zoom::Z0 => b"0".to_vec(),
+            Zoom::Z25 => b"25".to_vec(),
+            Zoom::Z50 => b"50".to_vec(),
+            Zoom::Z75 => b"75".to_vec(),
+            Zoom::Z100 => b"100".to_vec(),
+            Zoom::Z200 => b"200".to_vec(),
+            Zoom::Z400 => b"400".to_vec(),
         }
     }
 }
@@ -92,6 +96,53 @@ impl Pane {
             y_split: b"0".to_vec(),
             ..Default::default()
         }
+    }
+}
+
+impl<W: Write> XmlWriter<W> for Pane {
+    fn write_xml<'a>(
+        &self,
+        writer: &'a mut Writer<W>,
+        tag_name: &'a str,
+    ) -> Result<&'a mut Writer<W>, XlsxError> {
+        let mut attrs = Vec::with_capacity(5);
+        if self.x_split != b"0" {
+            attrs.push((b"xSplit".as_ref(), self.x_split.as_ref()));
+        }
+        if self.y_split != b"0" {
+            attrs.push((b"ySplit".as_ref(), self.y_split.as_ref()));
+        }
+        let cell_ref;
+        if let Some(ref cell) = self.top_left_cell {
+            cell_ref = Sheet::cell_to_cell_reference(*cell);
+            attrs.push((b"topLeftCell".as_ref(), cell_ref.as_ref()));
+        }
+        if self.active_pane != PanePosition::default() {
+            attrs.push((
+                b"activePane".as_ref(),
+                match self.active_pane {
+                    PanePosition::BottomRight => b"bottomRight".as_ref(),
+                    PanePosition::TopRight => b"topRight".as_ref(),
+                    PanePosition::BottomLeft => b"bottomLeft".as_ref(),
+                    PanePosition::TopLeft => b"topLeft".as_ref(),
+                },
+            ));
+        }
+        if self.state != PaneState::default() {
+            attrs.push((
+                b"state".as_ref(),
+                match self.state {
+                    PaneState::Frozen => b"frozen".as_ref(),
+                    PaneState::Split => b"split".as_ref(),
+                    PaneState::FrozenSplit => b"frozenSplit".as_ref(),
+                },
+            ));
+        }
+        writer
+            .create_element(tag_name)
+            .with_attributes(attrs)
+            .write_empty()?;
+        Ok(writer)
     }
 }
 
@@ -229,7 +280,6 @@ pub(crate) struct PivotSelection {
 impl PivotSelection {
     pub(crate) fn new() -> Self {
         Self {
-            area: todo!(),
             col: b"0".to_vec(),
             row: b"0".to_vec(),
             click: b"0".to_vec(),
@@ -247,10 +297,11 @@ impl PivotSelection {
 /// A default view of a sheet
 #[derive(Debug, Default, PartialEq, Clone, Eq)]
 pub(crate) struct SheetView {
-    zoom_scale: Option<Vec<u8>>, // writes zoomScale and zoomNormalScale with same value
-    zoom_scale_page: Option<Vec<u8>>,
-    zoom_scale_sheet: Option<Vec<u8>>,
-    view_id: Option<Vec<u8>>,
+    zoom_scale: Vec<u8>,
+    zoom_scale_normal: Vec<u8>,
+    zoom_scale_page: Vec<u8>,
+    zoom_scale_sheet: Vec<u8>,
+    view_id: Vec<u8>,
     top_left_cell: Option<Cell>,
     view: Option<View>,
     grid_color: GridlineColor,
@@ -269,26 +320,19 @@ pub(crate) struct SheetView {
     show_outline_symbol: bool,
 }
 impl SheetView {
-    fn new() -> Self {
+    fn new(id: u32) -> Self {
         Self {
             show_grid: true,
             show_zero: true,
             show_outline_symbol: true,
-            view: None,
-            grid_color: GridlineColor::Automatic,
-            pane: None,
-            zoom_scale: None,
-            zoom_scale_page: None,
-            zoom_scale_sheet: None,
-            view_id: None,
-            show_tab: false,
-            show_ruler: false,
-            show_header: false,
-            show_formula: false,
-            show_whitespace: false,
-            use_protection: false,
-            use_rtl: false,
-            top_left_cell: None,
+            zoom_scale: Zoom::Z100.into(),
+            zoom_scale_normal: Zoom::Z0.into(),
+            zoom_scale_page: Zoom::Z0.into(),
+            zoom_scale_sheet: Zoom::Z0.into(),
+            view_id: id.to_string().as_bytes().to_vec(),
+            show_ruler: true,
+            show_header: true,
+            show_whitespace: true,
             ..Default::default()
         }
     }
@@ -473,7 +517,92 @@ impl<W: Write> XmlWriter<W> for Sheet {
                         }
                         Ok(())
                     })?;
+                // sheetViews
+                for view in &self.sheet_views {
+                    let mut attrs = Vec::with_capacity(9);
+                    if view.use_protection {
+                        attrs.push((b"windowProtection".as_ref(), b"1".as_ref()));
+                    }
+                    if view.show_formula {
+                        attrs.push((b"showFormulas".as_ref(), b"1".as_ref()));
+                    }
+                    if !view.show_grid {
+                        attrs.push((b"showGridLines".as_ref(), b"0".as_ref()));
+                    }
+                    if !view.show_header {
+                        attrs.push((b"showRowColHeaders".as_ref(), b"0".as_ref()));
+                    }
+                    if !view.show_zero {
+                        attrs.push((b"showZeros".as_ref(), b"0".as_ref()));
+                    }
+                    if view.use_rtl {
+                        attrs.push((b"rightToLeft".as_ref(), b"1".as_ref()));
+                    }
+                    if view.show_tab {
+                        attrs.push((b"tabSelected".as_ref(), b"1".as_ref()));
+                    }
+                    if !view.show_ruler {
+                        attrs.push((b"showRuler".as_ref(), b"0".as_ref()));
+                    }
+                    if !view.show_outline_symbol {
+                        attrs.push((b"showOutlineSymbols".as_ref(), b"0".as_ref()));
+                    }
+                    let grid_color;
+                    if view.grid_color != GridlineColor::Automatic {
+                        grid_color = (view.grid_color.clone() as u8).to_string();
+                        attrs.push((b"colorId".as_ref(), grid_color.as_ref()));
+                    }
+                    if !view.show_whitespace {
+                        attrs.push((b"showWhiteSpace".as_ref(), b"0".as_ref()));
+                    }
+                    if let Some(ref view_type) = view.view {
+                        let view = match view_type {
+                            View::Normal => b"".as_ref(),
+                            View::PageBreakPreview => b"pageBreakPreview".as_ref(),
+                            View::PageLayout => b"pageLayout".as_ref(),
+                        };
+                        if view != b"" {
+                            attrs.push((b"view".as_ref(), view));
+                        }
+                    }
+                    let top_left_cell;
+                    if let Some(ref cell) = view.top_left_cell {
+                        top_left_cell = Sheet::cell_to_cell_reference(*cell);
+                        attrs.push((b"topLeftCell".as_ref(), &top_left_cell));
+                    }
+                    if view.zoom_scale != <Zoom as Into<Vec<u8>>>::into(Zoom::Z100) {
+                        attrs.push((b"zoomScale".as_ref(), &view.zoom_scale));
+                    }
+                    if view.zoom_scale_normal != <Zoom as Into<Vec<u8>>>::into(Zoom::Z0) {
+                        attrs.push((b"zoomScaleNormal".as_ref(), &view.zoom_scale_normal));
+                    }
+                    if view.zoom_scale_sheet != <Zoom as Into<Vec<u8>>>::into(Zoom::Z0) {
+                        attrs.push((b"zoomScaleSheetLayoutView".as_ref(), &view.zoom_scale_sheet));
+                    }
+                    if view.zoom_scale_page != <Zoom as Into<Vec<u8>>>::into(Zoom::Z0) {
+                        attrs.push((b"zoomScalePageLayoutView".as_ref(), &view.zoom_scale_page));
+                    }
+                    attrs.push((b"workbookViewId".as_ref(), &view.view_id));
+                    writer
+                        .create_element("sheetView")
+                        .with_attributes(attrs)
+                        .write_inner_content::<_, XlsxError>(|writer| {
+                            // pane
+                            if let Some(ref pane) = view.pane {
+                                pane.write_xml(writer, "pane")?;
+                            }
+                            // // selection
+                            // if let Some(ref selection) = view.selection {
+                            //     selection.write_xml(writer, "selection")?;
+                            // }
+                            // // pivotSelection
+                            // if let Some(ref pivot_selection) = view.pivot_selection {
+                            //     pivot_selection.write_xml(writer, "pivotSelection")?;
+                            // }
 
+                            Ok(())
+                        })?;
+                }
                 Ok(())
             })?;
         Ok(writer)
@@ -624,7 +753,7 @@ impl Sheet {
                     loop {
                         view_buf.clear();
                         let event = xml.read_event_into(&mut view_buf);
-                        let mut sheet_view = SheetView::new();
+                        let mut sheet_view = SheetView::new(0);
                         match event {
                             Ok(Event::Empty(ref e)) | Ok(Event::Start(ref e))
                                 if e.local_name().as_ref() == b"sheetView" =>
@@ -638,17 +767,20 @@ impl Sheet {
                                             b"showGridLines" => {
                                                 sheet_view.show_grid = *a.value == *b"1";
                                             }
-                                            b"zoomScaleNormal" | b"zoomScale" => {
-                                                sheet_view.zoom_scale = Some(a.value.into());
+                                            b"zoomScaleNormal" => {
+                                                sheet_view.zoom_scale_normal = a.value.into();
+                                            }
+                                            b"zoomScale" => {
+                                                sheet_view.zoom_scale = a.value.into();
                                             }
                                             b"zoomScalePageLayoutView" => {
-                                                sheet_view.zoom_scale_page = Some(a.value.into());
+                                                sheet_view.zoom_scale_page = a.value.into();
                                             }
                                             b"zoomScaleSheetLayoutView" => {
-                                                sheet_view.zoom_scale_sheet = Some(a.value.into());
+                                                sheet_view.zoom_scale_sheet = a.value.into();
                                             }
                                             b"workbookViewId" => {
-                                                sheet_view.view_id = Some(a.value.into())
+                                                sheet_view.view_id = a.value.into()
                                             }
                                             b"windowProtection" => {
                                                 sheet_view.use_protection = *a.value == *b"1";
@@ -1186,6 +1318,7 @@ impl Sheet {
                                                                 }
                                                             }
                                                         }
+
                                                         //////////////////
                                                         //// REFERENCE
                                                         //////////////
@@ -1198,8 +1331,9 @@ impl Sheet {
                                                                 if let Ok(a) = attr {
                                                                     match a.key.as_ref() {
                                                                         b"field" => {
-                                                                            reference.field =
-                                                                                Some(a.value.to_vec())
+                                                                            reference.field = Some(
+                                                                                a.value.to_vec(),
+                                                                            )
                                                                         }
                                                                         b"selected" => {
                                                                             reference.selected =
