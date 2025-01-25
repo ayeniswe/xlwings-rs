@@ -1,2 +1,2 @@
 pub mod stream;
-mod errors;
+pub mod errors;

@@ -36,7 +36,7 @@ pub(crate) fn xml_reader<'a, RS: Read + Seek>(
     }
 }
 
-pub(crate) trait XmlWriter<W: Write> {
+pub trait XmlWriter<W: Write> {
     /// Allows us to piece up how we will write from objects to xml
     fn write_xml<'a>(
         &self,

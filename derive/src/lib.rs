@@ -1,24 +1,13 @@
 use proc_macro::TokenStream;
-use quote::{format_ident, quote, ToTokens as _};
+use quote::{quote, ToTokens as _};
 use syn::{
-    meta::{parser, ParseNestedMeta},
-    parenthesized, parse_macro_input,
-    punctuated::Punctuated,
-    spanned::Spanned as _,
-    Attribute, Data, DeriveInput, Error, Fields, Lit, LitBool, LitByteStr, LitStr, Meta, MetaList,
-    MetaNameValue, Token,
+    parse_macro_input, spanned::Spanned as _, Data, DeriveInput, Error, Fields, LitBool,
+    LitByteStr, LitStr,
 };
-
-/// Defines uncommon possible default values for struct fields.
-enum DefaultValue {
-    Bool(bool),
-    Bytes(LitByteStr),
-}
-
 /// Derive macro for generating XML serialization code.
 ///
 /// This macro generates an implementation of the `XmlWriter` trait for the annotated struct.
-/// The struct's fields can be customized using the `#[x(...)]` attribute.
+/// The struct's fields can be customized using the `#[xml(...)]` attribute.
 ///
 /// # Attributes
 ///
@@ -113,7 +102,7 @@ enum DefaultValue {
 ///
 /// This will generate XML serialization code where:
 /// - The `active` field is serialized as `<MyStruct active_pane = "0"/>`.
-#[proc_macro_derive(XmlWriter, attributes(xml))]
+#[proc_macro_derive(XmlWrite, attributes(xml))]
 pub fn derive_xml_writer(input: TokenStream) -> TokenStream {
     // Gather the code definition
     let input = parse_macro_input!(input as DeriveInput);

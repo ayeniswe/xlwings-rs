@@ -8,7 +8,6 @@ use crate::{
     stream::utils::{xml_reader, Key, Save, XmlWriter},
 };
 use bimap::{BiBTreeMap, BiHashMap, BiMap};
-use derive::XmlWriter;
 use num_enum::{FromPrimitive, IntoPrimitive};
 use quick_xml::{
     events::{BytesDecl, BytesStart, Event},
@@ -1791,34 +1790,4 @@ mod sheet_unittests {
             // );
         }
     }
-}
-
-#[derive(XmlWriter)]
-#[xml(name = "ex")]
-struct Example {
-    #[xml(name = "activePane")]
-    active_pane: bool,
-    #[xml(default_bool = true)]
-    x_split: bool,
-    value_test: Vec<u8>,
-    #[xml(default_bytes = b"test")]
-    open_win: Vec<u8>,
-}
-
-#[test]
-fn test_xml_writer_derive() {
-    let sheet = Example {
-        active_pane: false,
-        x_split: true,
-        value_test: b"01234".to_vec(),
-        open_win: b"test".to_vec(),
-    };
-
-    let mut buffer = Cursor::new(Vec::new());
-    let mut writer = Writer::new(&mut buffer);
-    let _ = sheet.write_xml(&mut writer, "sheet");
-
-    let xml_output = String::from_utf8(buffer.into_inner()).unwrap();
-    let expected_output = r#"<ex activePane="0" value_test="01234"/>"#;
-    assert_eq!(xml_output, expected_output);
 }

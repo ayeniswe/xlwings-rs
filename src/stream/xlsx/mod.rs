@@ -1,8 +1,8 @@
 //! The module holds all logic to fully deserialize a .xlsx file and its contents
+pub mod errors;
 mod shared_string_table;
 mod sheet;
 mod stylesheet;
-pub(crate) mod errors;
 
 use super::utils::Save;
 use errors::XlsxError;
