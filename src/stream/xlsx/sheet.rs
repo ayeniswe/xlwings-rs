@@ -8,6 +8,7 @@ use crate::{
     stream::utils::{xml_reader, Key, Save, XmlWriter},
 };
 use bimap::{BiBTreeMap, BiHashMap, BiMap};
+use derive::XmlWrite;
 use num_enum::{FromPrimitive, IntoPrimitive};
 use quick_xml::{
     events::{BytesDecl, BytesStart, Event},
@@ -41,110 +42,15 @@ const MAX_COLUMNS: u16 = 16_384;
 /// Max inclusive of cell rows allowed
 const MAX_ROWS: u32 = 1_048_576;
 
-/// Predefined zoom level for a sheet
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub(crate) enum Zoom {
-    Z0,
-    Z25,
-    Z50,
-    Z75,
+/// Axis on a `PivotTable`
+#[derive(Debug, Default, PartialEq, Clone, Eq)]
+pub(crate) enum Axis {
     #[default]
-    Z100,
-    Z200,
-    Z400,
+    AxisRow,
+    AxisCol,
+    AxisPage,
+    AxisValues,
 }
-
-impl Into<Vec<u8>> for Zoom {
-    fn into(self) -> Vec<u8> {
-        match self {
-            Zoom::Z0 => b"0".to_vec(),
-            Zoom::Z25 => b"25".to_vec(),
-            Zoom::Z50 => b"50".to_vec(),
-            Zoom::Z75 => b"75".to_vec(),
-            Zoom::Z100 => b"100".to_vec(),
-            Zoom::Z200 => b"200".to_vec(),
-            Zoom::Z400 => b"400".to_vec(),
-        }
-    }
-}
-
-/// The view setting of a sheet
-#[derive(Default, Debug, Clone, PartialEq, Eq)]
-pub(crate) enum View {
-    #[default]
-    /// Normal view
-    Normal,
-    /// Page break preview
-    PageBreakPreview,
-    /// Page layout view
-    PageLayout,
-}
-
-/// The pane for viewing worksheet
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub(crate) struct Pane {
-    active_pane: PanePosition,
-    state: PaneState,
-    top_left_cell: Option<Cell>,
-    x_split: Vec<u8>,
-    y_split: Vec<u8>,
-}
-impl Pane {
-    pub fn new() -> Self {
-        Self {
-            x_split: b"0".to_vec(),
-            y_split: b"0".to_vec(),
-            ..Default::default()
-        }
-    }
-}
-
-// impl<W: Write> XmlWriter<W> for Pane {
-//     fn write_xml<'a>(
-//         &self,
-//         writer: &'a mut Writer<W>,
-//         tag_name: &'a str,
-//     ) -> Result<&'a mut Writer<W>, XlsxError> {
-//         let mut attrs = Vec::with_capacity(5);
-//         if self.x_split != b"0" {
-//             attrs.push((b"xSplit".as_ref(), self.x_split.as_ref()));
-//         }
-//         if self.y_split != b"0" {
-//             attrs.push((b"ySplit".as_ref(), self.y_split.as_ref()));
-//         }
-//         let cell_ref;
-//         if let Some(ref cell) = self.top_left_cell {
-//             cell_ref = Sheet::cell_to_cell_reference(*cell);
-//             attrs.push((b"topLeftCell".as_ref(), cell_ref.as_ref()));
-//         }
-//         if self.active_pane != PanePosition::default() {
-//             attrs.push((
-//                 b"activePane".as_ref(),
-//                 match self.active_pane {
-//                     PanePosition::BottomRight => b"bottomRight".as_ref(),
-//                     PanePosition::TopRight => b"topRight".as_ref(),
-//                     PanePosition::BottomLeft => b"bottomLeft".as_ref(),
-//                     PanePosition::TopLeft => b"topLeft".as_ref(),
-//                 },
-//             ));
-//         }
-//         if self.state != PaneState::default() {
-//             attrs.push((
-//                 b"state".as_ref(),
-//                 match self.state {
-//                     PaneState::Frozen => b"frozen".as_ref(),
-//                     PaneState::Split => b"split".as_ref(),
-//                     PaneState::FrozenSplit => b"frozenSplit".as_ref(),
-//                 },
-//             ));
-//         }
-//         writer
-//             .create_element(tag_name)
-//             .with_attributes(attrs)
-//             .write_empty()?;
-//         Ok(writer)
-//     }
-// }
 
 // Location of pane within sheet
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -155,12 +61,46 @@ pub(crate) enum PanePosition {
     #[default]
     TopLeft,
 }
+impl TryFrom<Vec<u8>> for PanePosition {
+    type Error = XlsxError;
+
+    fn try_from(value: Vec<u8>) -> Result<Self, Self::Error> {
+        match value.as_slice() {
+            b"bottomLeft" => Ok(PanePosition::BottomLeft),
+            b"bottomRight" => Ok(PanePosition::BottomRight),
+            b"topLeft" => Ok(PanePosition::TopLeft),
+            b"topRight" => Ok(PanePosition::TopRight),
+            v => {
+                let value = String::from_utf8_lossy(v);
+                Err(XlsxError::MissingVariant(
+                    "PanePosition".into(),
+                    value.into(),
+                ))
+            }
+        }
+    }
+}
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub(crate) enum PaneState {
     Frozen,
     #[default]
     Split,
     FrozenSplit,
+}
+impl TryFrom<Vec<u8>> for PaneState {
+    type Error = XlsxError;
+
+    fn try_from(value: Vec<u8>) -> Result<Self, Self::Error> {
+        match value.as_slice() {
+            b"frozen" => Ok(PaneState::Frozen),
+            b"split" => Ok(PaneState::Split),
+            b"frozenSplit" => Ok(PaneState::FrozenSplit),
+            v => {
+                let value = String::from_utf8_lossy(v);
+                Err(XlsxError::MissingVariant("PaneState".into(), value.into()))
+            }
+        }
+    }
 }
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub(crate) enum PivotType {
@@ -173,170 +113,26 @@ pub(crate) enum PivotType {
     Button,
     TopRight,
 }
+impl TryFrom<Vec<u8>> for PivotType {
+    type Error = XlsxError;
 
-/// A sheet view selection view
-#[derive(Debug, Default, PartialEq, Clone, Eq)]
-pub(crate) struct Selection {
-    cell: Option<Cell>,
-    cell_id: Vec<u8>,
-    pane: PanePosition,
-    sqref: Vec<CellRange>,
-}
-impl Selection {
-    pub(crate) fn new() -> Self {
-        Self {
-            sqref: vec![((0, 0), (0, 0))],
-            cell_id: b"0".to_vec(),
-            ..Default::default()
+    fn try_from(value: Vec<u8>) -> Result<Self, Self::Error> {
+        match value.as_slice() {
+            b"none" => Ok(PivotType::None),
+            b"normal" => Ok(PivotType::Normal),
+            b"data" => Ok(PivotType::Data),
+            b"all" => Ok(PivotType::All),
+            b"origin" => Ok(PivotType::Origin),
+            b"button" => Ok(PivotType::Button),
+            b"topRight" => Ok(PivotType::TopRight),
+            v => {
+                let value = String::from_utf8_lossy(v);
+                Err(XlsxError::MissingVariant("PivotType".into(), value.into()))
+            }
         }
     }
-}
-/// Represents a selected field and item within its parent
-#[derive(Debug, Default, PartialEq, Clone, Eq)]
-pub(crate) struct Reference {
-    include_variance_filter: bool,
-    include_pop_variance_filter: bool,
-    include_sum_aggregate_filter: bool,
-    include_prod_aggregate_filter: bool,
-    include_min_aggregate_filter: bool,
-    include_avg_aggregate_filter: bool,
-    include_max_aggregate_filter: bool,
-    include_std_deviation_filter: bool,
-    include_pop_std_deviation_filter: bool,
-    include_default_filter: bool,
-    include_count_filter: bool,
-    include_counta_filter: bool,
-    selected: bool,
-    relative: bool,
-    by_position: bool,
-    field: Option<Vec<u8>>,
-    values: Vec<Vec<u8>>, // count attribute need to write and represents the length
-}
-impl Reference {
-    pub(crate) fn new() -> Self {
-        Self {
-            ..Default::default()
-        }
-    }
-}
-/// A rule to describe `PivotTable` selection
-#[derive(Debug, Default, PartialEq, Clone, Eq)]
-pub(crate) struct PivotArea {
-    references: Vec<Reference>, // count attribute need to write and represents the length
-    axis: Option<Axis>,
-    collapsed_are_subtotal: bool,
-    offset: CellRange,
-    outline: bool,
-    cache_index: bool,
-    include_col_total: bool,
-    include_row_total: bool,
-    use_label_only: bool,
-    use_data_only: bool,
-    pivot_type: PivotType,
-    field: Option<Vec<u8>>,
-    field_pos: Option<Vec<u8>>,
-}
-impl PivotArea {
-    pub(crate) fn new() -> Self {
-        Self {
-            outline: true,
-            ..Default::default()
-        }
-    }
-}
-/// Axis on a `PivotTable`
-#[derive(Debug, Default, PartialEq, Clone, Eq)]
-pub(crate) enum Axis {
-    #[default]
-    AxisRow,
-    AxisCol,
-    AxisPage,
-    AxisValues,
 }
 
-/// Selections found within a `PivotTable`
-#[derive(Debug, Default, PartialEq, Clone, Eq)]
-pub(crate) struct PivotSelection {
-    col: Vec<u8>,
-    row: Vec<u8>,
-    axis: Option<Axis>,
-    click: Vec<u8>,
-    count: Vec<u8>,
-    data: bool,
-    extendable: bool,
-    label: bool,
-    show_header: bool,
-    dimension: Vec<u8>,
-    max: Vec<u8>,
-    min: Vec<u8>,
-    pane: PanePosition,
-    rid: Option<Vec<u8>>,
-    prev_col: Vec<u8>,
-    prev_row: Vec<u8>,
-    start: Vec<u8>,
-    area: PivotArea,
-}
-
-impl PivotSelection {
-    pub(crate) fn new() -> Self {
-        Self {
-            col: b"0".to_vec(),
-            row: b"0".to_vec(),
-            click: b"0".to_vec(),
-            count: b"0".to_vec(),
-            dimension: b"0".to_vec(),
-            max: b"0".to_vec(),
-            min: b"0".to_vec(),
-            prev_col: b"0".to_vec(),
-            prev_row: b"0".to_vec(),
-            start: b"0".to_vec(),
-            ..Default::default()
-        }
-    }
-}
-/// A default view of a sheet
-#[derive(Debug, Default, PartialEq, Clone, Eq)]
-pub(crate) struct SheetView {
-    zoom_scale: Vec<u8>,
-    zoom_scale_normal: Vec<u8>,
-    zoom_scale_page: Vec<u8>,
-    zoom_scale_sheet: Vec<u8>,
-    view_id: Vec<u8>,
-    top_left_cell: Option<Cell>,
-    view: Option<View>,
-    grid_color: GridlineColor,
-    show_formula: bool,
-    show_zero: bool,
-    show_grid: bool,
-    show_whitespace: bool,
-    use_protection: bool,
-    show_tab: bool,
-    show_ruler: bool,
-    use_rtl: bool,
-    pane: Option<Pane>,
-    selection: Option<Selection>,
-    pivot_selection: Option<PivotSelection>,
-    show_header: bool,
-    show_outline_symbol: bool,
-}
-impl SheetView {
-    fn new(id: u32) -> Self {
-        Self {
-            show_grid: true,
-            show_zero: true,
-            show_outline_symbol: true,
-            zoom_scale: Zoom::Z100.into(),
-            zoom_scale_normal: Zoom::Z0.into(),
-            zoom_scale_page: Zoom::Z0.into(),
-            zoom_scale_sheet: Zoom::Z0.into(),
-            view_id: id.to_string().as_bytes().to_vec(),
-            show_ruler: true,
-            show_header: true,
-            show_whitespace: true,
-            ..Default::default()
-        }
-    }
-}
 #[derive(Default, Debug, Clone, FromPrimitive, IntoPrimitive, PartialEq, Eq)]
 #[repr(u8)]
 pub(crate) enum GridlineColor {
@@ -389,27 +185,875 @@ pub(crate) enum GridlineColor {
     Red = 10,
     Green = 17,
 }
+impl TryFrom<Vec<u8>> for GridlineColor {
+    type Error = XlsxError;
+
+    fn try_from(value: Vec<u8>) -> Result<Self, Self::Error> {
+        match value.as_slice() {
+            b"0" => Ok(GridlineColor::Automatic),
+            b"8" => Ok(GridlineColor::Black),
+            b"15" => Ok(GridlineColor::Turquoise),
+            b"60" => Ok(GridlineColor::Brown),
+            b"14" => Ok(GridlineColor::Pink),
+            b"59" => Ok(GridlineColor::OliveGreen),
+            b"58" => Ok(GridlineColor::DarkGreen),
+            b"56" => Ok(GridlineColor::DarkTeal),
+            b"18" => Ok(GridlineColor::DarkBlue),
+            b"62" => Ok(GridlineColor::Indigo),
+            b"63" => Ok(GridlineColor::Gray80),
+            b"23" => Ok(GridlineColor::Gray50),
+            b"55" => Ok(GridlineColor::Gray40),
+            b"22" => Ok(GridlineColor::Gray25),
+            b"9" => Ok(GridlineColor::White),
+            b"31" => Ok(GridlineColor::IceBlue),
+            b"12" => Ok(GridlineColor::Blue),
+            b"21" => Ok(GridlineColor::Teal),
+            b"30" => Ok(GridlineColor::OceanBlue),
+            b"25" => Ok(GridlineColor::Plum),
+            b"46" => Ok(GridlineColor::Lavender),
+            b"20" => Ok(GridlineColor::Violet),
+            b"54" => Ok(GridlineColor::BlueGray),
+            b"48" => Ok(GridlineColor::LightBlue),
+            b"40" => Ok(GridlineColor::SkyBlue),
+            b"44" => Ok(GridlineColor::PaleBlue),
+            b"29" => Ok(GridlineColor::Coral),
+            b"16" => Ok(GridlineColor::DarkRed),
+            b"49" => Ok(GridlineColor::Aqua),
+            b"27" => Ok(GridlineColor::LightTurquoise),
+            b"28" => Ok(GridlineColor::DarkPurple),
+            b"57" => Ok(GridlineColor::SeaGreen),
+            b"42" => Ok(GridlineColor::LightGreen),
+            b"11" => Ok(GridlineColor::BrightGreen),
+            b"13" => Ok(GridlineColor::Yellow),
+            b"26" => Ok(GridlineColor::Ivory),
+            b"43" => Ok(GridlineColor::LightYellow),
+            b"19" => Ok(GridlineColor::DarkYellow),
+            b"50" => Ok(GridlineColor::Lime),
+            b"53" => Ok(GridlineColor::Orange),
+            b"52" => Ok(GridlineColor::LightOrange),
+            b"51" => Ok(GridlineColor::Gold),
+            b"47" => Ok(GridlineColor::Tan),
+            b"45" => Ok(GridlineColor::Rose),
+            b"24" => Ok(GridlineColor::Periwinkle),
+            b"10" => Ok(GridlineColor::Red),
+            b"17" => Ok(GridlineColor::Green),
+            v => {
+                let value = String::from_utf8_lossy(v);
+                Err(XlsxError::MissingVariant(
+                    "GridlineColor".into(),
+                    value.to_string(),
+                ))
+            }
+        }
+    }
+}
+
+/// Predefined zoom level for a sheet
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub(crate) enum Zoom {
+    /// 0%
+    Z0,
+    /// 25%
+    Z25,
+    /// 50%
+    Z50,
+    /// 75%
+    Z75,
+    #[default]
+    /// 100%
+    Z100,
+    /// 200%
+    Z200,
+    /// 400%
+    Z400,
+}
+impl Into<Vec<u8>> for Zoom {
+    fn into(self) -> Vec<u8> {
+        match self {
+            Zoom::Z0 => b"0".to_vec(),
+            Zoom::Z25 => b"25".to_vec(),
+            Zoom::Z50 => b"50".to_vec(),
+            Zoom::Z75 => b"75".to_vec(),
+            Zoom::Z100 => b"100".to_vec(),
+            Zoom::Z200 => b"200".to_vec(),
+            Zoom::Z400 => b"400".to_vec(),
+        }
+    }
+}
+
+/// The view setting of a sheet
+#[derive(Default, Debug, Clone, PartialEq, Eq)]
+pub(crate) enum View {
+    #[default]
+    /// Normal view
+    Normal,
+    /// Page break preview
+    PageBreakPreview,
+    /// Page layout view
+    PageLayout,
+}
+impl TryFrom<Vec<u8>> for View {
+    type Error = XlsxError;
+
+    fn try_from(value: Vec<u8>) -> Result<Self, Self::Error> {
+        match value.as_slice() {
+            b"normal" => Ok(View::Normal),
+            b"pageBreakPreview" => Ok(View::PageBreakPreview),
+            b"pageLayout" => Ok(View::PageLayout),
+            v => {
+                let value = String::from_utf8_lossy(v);
+                Err(XlsxError::MissingVariant("View".into(), value.into()))
+            }
+        }
+    }
+}
+
+/// Represents a pane in a spreadsheet, defining the split and active pane settings.
+///
+/// This struct corresponds to the `CT_Pane` complex type in the XML schema. It encapsulates
+/// attributes that control the position of splits, the active pane, and the state of the pane.
+///
+/// # XML Schema Mapping
+/// The struct maps to the following XML schema definition:
+/// ```xml
+/// <complexType name="CT_Pane">
+///     <attribute name="xSplit" type="xsd:double" use="optional" default="0"/>
+///     <attribute name="ySplit" type="xsd:double" use="optional" default="0"/>
+///     <attribute name="topLeftCell" type="ST_CellRef" use="optional"/>
+///     <attribute name="activePane" type="ST_Pane" use="optional" default="topLeft"/>
+///     <attribute name="state" type="ST_PaneState" use="optional" default="split"/>
+/// </complexType>
+/// ```
+///
+/// # Fields
+/// - `x_split`: The horizontal split position (`xSplit`).
+/// - `y_split`: The vertical split position (`ySplit`).
+/// - `top_left_cell`: The top-left cell visible in the pane (`topLeftCell`).
+/// - `active_pane`: The active pane (`activePane`).
+/// - `state`: The state of the pane (`state`), e.g., "split", "frozen".
+///
+/// # Example
+/// ```rust
+/// use my_crate::Pane;
+///
+/// let pane = Pane {
+///     x_split: b"0".to_vec(),
+///     y_split: b"0".to_vec(),
+///     top_left_cell: b"A1".to_vec(),
+///     active_pane: b"topLeft".to_vec(),
+///     state: b"split".to_vec(),
+/// };
+/// ```
+#[derive(Debug, Default, Clone, PartialEq, Eq, XmlWrite)]
+pub(crate) struct Pane {
+    #[xml(name = "xSplit", default_bytes = b"0")]
+    x_split: Vec<u8>,
+    #[xml(name = "ySplit", default_bytes = b"0")]
+    y_split: Vec<u8>,
+    #[xml(name = "topLeftCell")]
+    top_left_cell: Vec<u8>,
+    #[xml(name = "activePane", default_bytes = b"topLeft")]
+    active_pane: Vec<u8>,
+    #[xml(name = "state", default_bytes = b"split")]
+    state: Vec<u8>,
+}
+impl Pane {
+    /// Creates a new `Pane` instance with xml schema default values.
+    pub fn new() -> Self {
+        Self {
+            ..Default::default()
+        }
+    }
+}
+
+/// Represents a selection within a sheet view, defining the active cell, pane, and selected range.
+///
+/// This struct corresponds to the `CT_Selection` complex type in the XML schema. It encapsulates
+/// attributes that specify the active cell, the pane in which the selection is active, and the
+/// range of selected cells.
+///
+/// # XML Schema Mapping
+/// The struct maps to the following XML schema definition:
+/// ```xml
+/// <complexType name="CT_Selection">
+///     <attribute name="pane" type="ST_Pane" use="optional"/>
+///     <attribute name="activeCell" type="ST_CellRef" use="optional"/>
+///     <attribute name="activeCellId" type="xsd:unsignedInt" use="optional" default="0"/>
+///     <attribute name="sqref" type="ST_Sqref" use="optional" default="A1"/>
+/// </complexType>
+/// ```
+///
+/// # Fields
+/// - `pane`: The pane in which the selection is active (`pane`).
+/// - `active_cell`: The active cell within the selection (`activeCell`).
+/// - `active_cell_id`: The ID of the active cell (`activeCellId`).
+/// - `sqref`: The range of selected cells (`sqref`).
+/// ```
+#[derive(Debug, Default, PartialEq, Clone, Eq, XmlWrite)]
+pub(crate) struct Selection {
+    #[xml(name = "pane")]
+    pane: Vec<u8>,
+    #[xml(name = "activeCell")]
+    cell: Vec<u8>,
+    #[xml(name = "activeCellId", default_bytes = b"0")]
+    cell_id: Vec<u8>,
+    #[xml(name = "sqref", default_bytes = b"A1")]
+    sqref: Vec<u8>,
+}
+impl Selection {
+    /// Creates a new `Selection` instance with xml schema default values.
+    pub(crate) fn new() -> Self {
+        Self {
+            ..Default::default()
+        }
+    }
+}
+
+/// Represents an index within a `PivotTable` selection.
+///
+/// This struct corresponds to the `CT_Index` complex type in the XML schema. It encapsulates
+/// an unsigned integer value that represents an index.
+///
+/// # XML Schema Mapping
+/// The struct maps to the following XML schema definition:
+/// ```xml
+/// <complexType name="CT_Index">
+///     <attribute name="v" use="required" type="xsd:unsignedInt"/>
+/// </complexType>
+/// ```
+///
+/// # Fields
+/// - `item`: The index value (`v`).
+#[derive(Debug, Default, PartialEq, Clone, Eq, XmlWrite)]
+pub(crate) struct CTIndex {
+    #[xml(name = "v")]
+    item: Vec<u8>,
+}
+impl CTIndex {
+    /// Creates a new `CT_Index` instance with xml schema default values.
+    pub(crate) fn new() -> Self {
+        Self {
+            ..Default::default()
+        }
+    }
+}
+
+/// Represents a selected field and item within its parent in a `PivotTable`.
+///
+/// This struct corresponds to the `CT_PivotAreaReference` complex type in the XML schema. It encapsulates
+/// attributes and elements that define the selection of a field, its position, and various filters and
+/// subtotals.
+///
+/// # XML Schema Mapping
+/// The struct maps to the following XML schema definition:
+/// ```xml
+/// <complexType name="CT_PivotAreaReference">
+///     <sequence>
+///         <element name="x" minOccurs="0" maxOccurs="unbounded" type="CT_Index"/>
+///         <element name="extLst" minOccurs="0" type="CT_ExtensionList"/>
+///     </sequence>
+///     <attribute name="field" use="optional" type="xsd:unsignedInt"/>
+///     <attribute name="count" type="xsd:unsignedInt"/>
+///     <attribute name="selected" type="xsd:boolean" default="true"/>
+///     <attribute name="byPosition" type="xsd:boolean" default="false"/>
+///     <attribute name="relative" type="xsd:boolean" default="false"/>
+///     <attribute name="defaultSubtotal" type="xsd:boolean" default="false"/>
+///     <attribute name="sumSubtotal" type="xsd:boolean" default="false"/>
+///     <attribute name="countASubtotal" type="xsd:boolean" default="false"/>
+///     <attribute name="avgSubtotal" type="xsd:boolean" default="false"/>
+///     <attribute name="maxSubtotal" type="xsd:boolean" default="false"/>
+///     <attribute name="minSubtotal" type="xsd:boolean" default="false"/>
+///     <attribute name="productSubtotal" type="xsd:boolean" default="false"/>
+///     <attribute name="countSubtotal" type="xsd:boolean" default="false"/>
+///     <attribute name="stdDevSubtotal" type="xsd:boolean" default="false"/>
+///     <attribute name="stdDevPSubtotal" type="xsd:boolean" default="false"/>
+///     <attribute name="varSubtotal" type="xsd:boolean" default="false"/>
+///     <attribute name="varPSubtotal" type="xsd:boolean" default="false"/>
+/// </complexType>
+/// ```
+///
+/// # Fields
+/// - `field`: The field index (`field`).
+/// - `count`: The count of references (`count`).
+/// - `selected`: Indicates whether the field is selected (`selected`).
+/// - `by_position`: Indicates whether the selection is by position (`byPosition`).
+/// - `relative`: Indicates whether the selection is relative (`relative`).
+/// - `include_default_filter`: Indicates whether to include the default subtotal filter (`defaultSubtotal`).
+/// - `include_sum_aggregate_filter`: Indicates whether to include the sum subtotal filter (`sumSubtotal`).
+/// - `include_counta_filter`: Indicates whether to include the countA subtotal filter (`countASubtotal`).
+/// - `include_avg_aggregate_filter`: Indicates whether to include the average subtotal filter (`avgSubtotal`).
+/// - `include_max_aggregate_filter`: Indicates whether to include the max subtotal filter (`maxSubtotal`).
+/// - `include_min_aggregate_filter`: Indicates whether to include the min subtotal filter (`minSubtotal`).
+/// - `include_prod_aggregate_filter`: Indicates whether to include the product subtotal filter (`productSubtotal`).
+/// - `include_count_filter`: Indicates whether to include the count subtotal filter (`countSubtotal`).
+/// - `include_std_deviation_filter`: Indicates whether to include the standard deviation subtotal filter (`stdDevSubtotal`).
+/// - `include_pop_std_deviation_filter`: Indicates whether to include the population standard deviation subtotal filter (`stdDevPSubtotal`).
+/// - `include_variance_filter`: Indicates whether to include the variance subtotal filter (`varSubtotal`).
+/// - `include_pop_variance_filter`: Indicates whether to include the population variance subtotal filter (`varPSubtotal`).
+/// - `selected_items`: A vector of `SelectedItem` elements, each representing an index (`x`).
+#[derive(Debug, Default, PartialEq, Clone, Eq, XmlWrite)]
+pub(crate) struct CTPivotAreaReference {
+    #[xml(name = "field")]
+    field: Vec<u8>,
+    #[xml(name = "count")]
+    count: Vec<u8>,
+    #[xml(name = "selected", default_bool = true)]
+    selected: bool,
+    #[xml(name = "byPosition", default_bool = false)]
+    by_position: bool,
+    #[xml(name = "relative", default_bool = false)]
+    relative: bool,
+    #[xml(name = "defaultSubtotal", default_bool = false)]
+    include_default_filter: bool,
+    #[xml(name = "sumSubtotal", default_bool = false)]
+    include_sum_aggregate_filter: bool,
+    #[xml(name = "countASubtotal", default_bool = false)]
+    include_counta_filter: bool,
+    #[xml(name = "avgSubtotal", default_bool = false)]
+    include_avg_aggregate_filter: bool,
+    #[xml(name = "maxSubtotal", default_bool = false)]
+    include_max_aggregate_filter: bool,
+    #[xml(name = "minSubtotal", default_bool = false)]
+    include_min_aggregate_filter: bool,
+    #[xml(name = "productSubtotal", default_bool = false)]
+    include_prod_aggregate_filter: bool,
+    #[xml(name = "countSubtotal", default_bool = false)]
+    include_count_filter: bool,
+    #[xml(name = "stdDevSubtotal", default_bool = false)]
+    include_std_deviation_filter: bool,
+    #[xml(name = "stdDevPSubtotal", default_bool = false)]
+    include_pop_std_deviation_filter: bool,
+    #[xml(name = "varSubtotal", default_bool = false)]
+    include_variance_filter: bool,
+    #[xml(name = "varPSubtotal", default_bool = false)]
+    include_pop_variance_filter: bool,
+
+    #[xml(element)]
+    selected_items: Vec<CTIndex>,
+}
+impl CTPivotAreaReference {
+    /// Creates a new `CT_PivotAreaReference` instance with xml schema default values.
+    pub(crate) fn new() -> Self {
+        Self {
+            ..Default::default()
+        }
+    }
+}
+
+/// Represents a collection of references within a `PivotTable` pivot area.
+///
+/// This struct corresponds to the `CT_PivotAreaReferences` complex type in the XML schema. It encapsulates
+/// a count of references and a collection of individual `Reference` elements.
+///
+/// # XML Schema Mapping
+/// The struct maps to the following XML schema definition:
+/// ```xml
+/// <complexType name="CT_PivotAreaReferences">
+///     <sequence>
+///         <element name="reference" maxOccurs="unbounded" type="CT_PivotAreaReference"/>
+///     </sequence>
+///     <attribute name="count" type="xsd:unsignedInt"/>
+/// </complexType>
+/// ```
+///
+/// # Fields
+/// - `count`: The number of references in the collection (`count`).
+/// - `references`: A vector of `Reference` elements, each representing a pivot area reference (`reference`).
+#[derive(Debug, Default, PartialEq, Clone, Eq, XmlWrite)]
+pub(crate) struct CTPivotAreaReferences {
+    #[xml(name = "count")]
+    count: Vec<u8>,
+    #[xml(element)]
+    references: Vec<CTPivotAreaReference>,
+}
+impl CTPivotAreaReferences {
+    /// Creates a new `CT_PivotAreaReferences` instance with xml schema default values.
+    pub(crate) fn new() -> Self {
+        Self {
+            ..Default::default()
+        }
+    }
+}
+
+/// Represents a rule to describe `PivotTable` selection, defining the area and its properties.
+///
+/// This struct corresponds to the `CT_PivotArea` complex type in the XML schema. It encapsulates
+/// attributes and elements that specify the pivot area, including its type, data, labels, and other
+/// settings.
+///
+/// # XML Schema Mapping
+/// The struct maps to the following XML schema definition:
+/// ```xml
+/// <complexType name="CT_PivotArea">
+///     <sequence>
+///         <element name="references" minOccurs="0" type="CT_PivotAreaReferences"/>
+///         <element name="extLst" minOccurs="0" type="CT_ExtensionList"/>
+///     </sequence>
+///     <attribute name="field" use="optional" type="xsd:int"/>
+///     <attribute name="type" type="ST_PivotAreaType" default="normal"/>
+///     <attribute name="dataOnly" type="xsd:boolean" default="true"/>
+///     <attribute name="labelOnly" type="xsd:boolean" default="false"/>
+///     <attribute name="grandRow" type="xsd:boolean" default="false"/>
+///     <attribute name="grandCol" type="xsd:boolean" default="false"/>
+///     <attribute name="cacheIndex" type="xsd:boolean" default="false"/>
+///     <attribute name="outline" type="xsd:boolean" default="true"/>
+///     <attribute name="offset" type="ST_Ref"/>
+///     <attribute name="collapsedLevelsAreSubtotals" type="xsd:boolean" default="false"/>
+///     <attribute name="axis" type="ST_Axis" use="optional"/>
+///     <attribute name="fieldPosition" type="xsd:unsignedInt" use="optional"/>
+/// </complexType>
+/// ```
+///
+/// # Fields
+/// - `field`: The field index (`field`).
+/// - `use_pivot_type`: The type of pivot area (`type`).
+/// - `use_data_only`: Indicates whether only data is included (`dataOnly`).
+/// - `use_label_only`: Indicates whether only labels are included (`labelOnly`).
+/// - `include_row_total`: Indicates whether to include row totals (`grandRow`).
+/// - `include_col_total`: Indicates whether to include column totals (`grandCol`).
+/// - `cache_index`: Indicates whether to use the cache index (`cacheIndex`).
+/// - `outline`: Indicates whether to include outlines (`outline`).
+/// - `offset`: The offset reference (`offset`).
+/// - `collapsed_are_subtotal`: Indicates whether collapsed levels are subtotals (`collapsedLevelsAreSubtotals`).
+/// - `axis`: The axis of the pivot area (`axis`).
+/// - `field_pos`: The field position (`fieldPosition`).
+/// - `reference_collection`: The collection of references (`references`).
+#[derive(Debug, Default, PartialEq, Clone, Eq, XmlWrite)]
+pub(crate) struct CTPivotArea {
+    #[xml(name = "field")]
+    field: Vec<u8>,
+    #[xml(name = "type", default_bytes = b"normal")]
+    pivot_type: Vec<u8>,
+    #[xml(name = "dataOnly", default_bool = true)]
+    use_data_only: bool,
+    #[xml(name = "labelOnly", default_bool = false)]
+    use_label_only: bool,
+    #[xml(name = "grandRow", default_bool = false)]
+    include_row_total: bool,
+    #[xml(name = "grandCol", default_bool = false)]
+    include_col_total: bool,
+    #[xml(name = "cacheIndex", default_bool = false)]
+    cache_index: bool,
+    #[xml(name = "outline", default_bool = true)]
+    outline: bool,
+    #[xml(name = "offset")]
+    offset: Vec<u8>,
+    #[xml(name = "collapsedLevelsAreSubtotals", default_bool = false)]
+    collapsed_are_subtotal: bool,
+    #[xml(name = "axis")]
+    axis: Vec<u8>,
+    #[xml(name = "fieldPosition")]
+    field_pos: Vec<u8>,
+
+    #[xml(element)]
+    reference_collection: CTPivotAreaReferences,
+}
+impl CTPivotArea {
+    /// Creates a new `CT_PivotArea` instance with xml schema default values.
+    pub(crate) fn new() -> Self {
+        Self {
+            outline: true,
+            ..Default::default()
+        }
+    }
+}
+
+/// Represents a selection within a `PivotTable`, defining the active row, column, and other settings.
+///
+/// This struct corresponds to the `CT_PivotSelection` complex type in the XML schema. It encapsulates
+/// attributes that specify the active row, column, pane, and other properties related to the selection
+/// within a PivotTable.
+///
+/// # XML Schema Mapping
+/// The struct maps to the following XML schema definition:
+/// ```xml
+/// <complexType name="CT_PivotSelection">
+///     <sequence>
+///         <element name="pivotArea" type="CT_PivotArea"/>
+///     </sequence>
+///     <attribute name="pane" type="ST_Pane" use="optional" default="topLeft"/>
+///     <attribute name="showHeader" type="xsd:boolean" default="false"/>
+///     <attribute name="label" type="xsd:boolean" default="false"/>
+///     <attribute name="data" type="xsd:boolean" default="false"/>
+///     <attribute name="extendable" type="xsd:boolean" default="false"/>
+///     <attribute name="count" type="xsd:unsignedInt" default="0"/>
+///     <attribute name="axis" type="ST_Axis" use="optional"/>
+///     <attribute name="dimension" type="xsd:unsignedInt" default="0"/>
+///     <attribute name="start" type="xsd:unsignedInt" default="0"/>
+///     <attribute name="min" type="xsd:unsignedInt" default="0"/>
+///     <attribute name="max" type="xsd:unsignedInt" default="0"/>
+///     <attribute name="activeRow" type="xsd:unsignedInt" default="0"/>
+///     <attribute name="activeCol" type="xsd:unsignedInt" default="0"/>
+///     <attribute name="previousRow" type="xsd:unsignedInt" default="0"/>
+///     <attribute name="previousCol" type="xsd:unsignedInt" default="0"/>
+///     <attribute name="click" type="xsd:unsignedInt" default="0"/>
+///     <attribute ref="r:id" use="optional"/>
+/// </complexType>
+/// ```
+///
+/// # Fields
+/// - `pane`: The pane in which the selection is active (`pane`).
+/// - `show_header`: Indicates whether to show the header (`showHeader`).
+/// - `label`: Indicates whether the selection is a label (`label`).
+/// - `data`: Indicates whether the selection is data (`data`).
+/// - `extendable`: Indicates whether the selection is extendable (`extendable`).
+/// - `count`: The count of selected items (`count`).
+/// - `axis`: The axis of the selection (`axis`).
+/// - `dimension`: The dimension of the selection (`dimension`).
+/// - `start`: The starting index of the selection (`start`).
+/// - `min`: The minimum value of the selection (`min`).
+/// - `max`: The maximum value of the selection (`max`).
+/// - `row`: The active row in the selection (`activeRow`).
+/// - `col`: The active column in the selection (`activeCol`).
+/// - `prev_row`: The previous active row (`previousRow`).
+/// - `prev_col`: The previous active column (`previousCol`).
+/// - `click`: The click count (`click`).
+/// - `rid`: The relationship ID (`r:id`).
+/// - `area`: The pivot area of the selection (`pivotArea`).
+#[derive(Debug, Default, PartialEq, Clone, Eq, XmlWrite)]
+pub(crate) struct CTPivotSelection {
+    #[xml(name = "pane", default_bytes = b"topLeft")]
+    pane: Vec<u8>,
+    #[xml(name = "showHeader", default_bool = false)]
+    show_header: bool,
+    #[xml(name = "label", default_bool = false)]
+    label: bool,
+    #[xml(name = "data", default_bool = false)]
+    data: bool,
+    #[xml(name = "extendable", default_bool = false)]
+    extendable: bool,
+    #[xml(name = "count", default_bytes = b"0")]
+    count: Vec<u8>,
+    #[xml(name = "axis")]
+    axis: Vec<u8>,
+    #[xml(name = "dimension", default_bytes = b"0")]
+    dimension: Vec<u8>,
+    #[xml(name = "start", default_bytes = b"0")]
+    start: Vec<u8>,
+    #[xml(name = "min", default_bytes = b"0")]
+    min: Vec<u8>,
+    #[xml(name = "max", default_bytes = b"0")]
+    max: Vec<u8>,
+    #[xml(name = "activeRow", default_bytes = b"0")]
+    row: Vec<u8>,
+    #[xml(name = "activeCol", default_bytes = b"0")]
+    col: Vec<u8>,
+    #[xml(name = "previousRow", default_bytes = b"0")]
+    prev_row: Vec<u8>,
+    #[xml(name = "previousCol", default_bytes = b"0")]
+    prev_col: Vec<u8>,
+    #[xml(name = "click", default_bytes = b"0")]
+    click: Vec<u8>,
+    #[xml(name = "r:id")]
+    rid: Vec<u8>,
+
+    #[xml(element)]
+    area: CTPivotArea,
+}
+impl CTPivotSelection {
+    /// Creates a new `CT_PivotSelection` instance with xml schema default values.
+    pub(crate) fn new() -> Self {
+        Self {
+            ..Default::default()
+        }
+    }
+}
+
+/// Represents a sheet view in a spreadsheet, defining visual and behavioral settings for a worksheet.
+///
+/// This struct corresponds to the `CT_SheetView` complex type in the XML schema. It encapsulates
+/// attributes and elements that control how a sheet is displayed, including visibility settings,
+/// zoom levels, and UI elements like grid lines, headers, and rulers.
+///
+/// # XML Schema Mapping
+/// The struct maps to the following XML schema definition:
+/// ```xml
+/// <complexType name="CT_SheetView">
+///     <sequence>
+///         <element name="pane" type="CT_Pane" minOccurs="0" maxOccurs="1"/>
+///         <element name="selection" type="CT_Selection" minOccurs="0" maxOccurs="4"/>
+///         <element name="pivotSelection" type="CT_PivotSelection" minOccurs="0" maxOccurs="4"/>
+///     </sequence>
+///     <attribute name="windowProtection" type="xsd:boolean" use="optional" default="false"/>
+///     <attribute name="showFormulas" type="xsd:boolean" use="optional" default="false"/>
+///     <attribute name="showGridLines" type="xsd:boolean" use="optional" default="true"/>
+///     <attribute name="showRowColHeaders" type="xsd:boolean" use="optional" default="true"/>
+///     <attribute name="showZeros" type="xsd:boolean" use="optional" default="true"/>
+///     <attribute name="rightToLeft" type="xsd:boolean" use="optional" default="false"/>
+///     <attribute name="tabSelected" type="xsd:boolean" use="optional" default="false"/>
+///     <attribute name="showRuler" type="xsd:boolean" use="optional" default="true"/>
+///     <attribute name="showOutlineSymbols" type="xsd:boolean" use="optional" default="true"/>
+///     <attribute name="defaultGridColor" type="xsd:boolean" use="optional" default="true"/>
+///     <attribute name="showWhiteSpace" type="xsd:boolean" use="optional" default="true"/>
+///     <attribute name="view" type="ST_SheetViewType" use="optional" default="normal"/>
+///     <attribute name="topLeftCell" type="ST_CellRef" use="optional"/>
+///     <attribute name="colorId" type="xsd:unsignedInt" use="optional" default="64"/>
+///     <attribute name="zoomScale" type="xsd:unsignedInt" use="optional" default="100"/>
+///     <attribute name="zoomScaleNormal" type="xsd:unsignedInt" use="optional" default="0"/>
+///     <attribute name="zoomScaleSheetLayoutView" type="xsd:unsignedInt" use="optional" default="0"/>
+///     <attribute name="zoomScalePageLayoutView" type="xsd:unsignedInt" use="optional" default="0"/>
+///     <attribute name="workbookViewId" type="xsd:unsignedInt" use="required"/>
+/// </complexType>
+/// ```
+///
+/// # Fields
+/// ## Attributes
+/// - `use_protection`: Enables or disables window protection (`windowProtection`).
+/// - `show_formula`: Controls the visibility of formulas (`showFormulas`).
+/// - `show_grid`: Toggles the display of grid lines (`showGridLines`).
+/// - `show_header`: Toggles the display of row and column headers (`showRowColHeaders`).
+/// - `show_zero`: Controls the visibility of zero values (`showZeros`).
+/// - `use_rtl`: Enables right-to-left layout (`rightToLeft`).
+/// - `show_tab`: Indicates whether the sheet tab is selected (`tabSelected`).
+/// - `show_ruler`: Toggles the display of the ruler (`showRuler`).
+/// - `show_outline_symbol`: Controls the visibility of outline symbols (`showOutlineSymbols`).
+/// - `grid_color`: Enables or disables the default grid color (`defaultGridColor`).
+/// - `show_whitespace`: Toggles the display of whitespace (`showWhiteSpace`).
+/// - `view`: Specifies the view type (`view`), e.g., "normal", "page layout".
+/// - `top_left_cell`: The top-left cell visible in the view (`topLeftCell`).
+/// - `color_id`: The color ID for the sheet (`colorId`).
+/// - `zoom_scale`: The zoom scale percentage (`zoomScale`).
+/// - `zoom_scale_normal`: The zoom scale for normal view (`zoomScaleNormal`).
+/// - `zoom_scale_sheet`: The zoom scale for sheet layout view (`zoomScaleSheetLayoutView`).
+/// - `zoom_scale_page`: The zoom scale for page layout view (`zoomScalePageLayoutView`).
+/// - `view_id`: The unique ID of the workbook view (`workbookViewId`).
+///
+/// ## Elements
+/// - `pane`: Represents the pane settings for the sheet (`pane`).
+/// - `selection`: Represents the selected cells or ranges (`selection`).
+/// - `pivot_selection`: Represents the pivot table selection (`pivotSelection`).
+/// ```
+#[derive(Debug, Default, PartialEq, Clone, Eq, XmlWrite)]
+pub(crate) struct CTSheetView {
+    #[xml(name = "windowProtection", default_bool = false)]
+    use_protection: bool,
+    #[xml(name = "showFormulas", default_bool = false)]
+    show_formula: bool,
+    #[xml(name = "showGridLines", default_bool = true)]
+    show_grid: bool,
+    #[xml(name = "showRowColHeaders", default_bool = true)]
+    show_header: bool,
+    #[xml(name = "showZeros", default_bool = true)]
+    show_zero: bool,
+    #[xml(name = "rightToLeft", default_bool = false)]
+    use_rtl: bool,
+    #[xml(name = "tabSelected", default_bool = false)]
+    show_tab: bool,
+    #[xml(name = "showRuler", default_bool = true)]
+    show_ruler: bool,
+    #[xml(name = "showOutlineSymbols", default_bool = true)]
+    show_outline_symbol: bool,
+    #[xml(name = "defaultGridColor", default_bool = true)]
+    use_default_grid_color: bool,
+    #[xml(name = "showWhiteSpace", default_bool = true)]
+    show_whitespace: bool,
+    #[xml(name = "view", default_bytes = b"normal")]
+    view: Vec<u8>,
+    #[xml(name = "topLeftCell")]
+    top_left_cell: Vec<u8>,
+    #[xml(name = "colorId", default_bytes = b"64")]
+    color_id: Vec<u8>,
+    #[xml(name = "zoomScale", default_bytes = b"100")]
+    zoom_scale: Vec<u8>,
+    #[xml(name = "zoomScaleNormal", default_bytes = b"0")]
+    zoom_scale_normal: Vec<u8>,
+    #[xml(name = "zoomScaleSheetLayoutView", default_bytes = b"0")]
+    zoom_scale_sheet: Vec<u8>,
+    #[xml(name = "zoomScalePageLayoutView", default_bytes = b"0")]
+    zoom_scale_page: Vec<u8>,
+    #[xml(name = "workbookViewId")]
+    view_id: Vec<u8>,
+
+    #[xml(element)]
+    pane: Option<Pane>,
+    #[xml(element)]
+    selection: Option<Selection>,
+    #[xml(element)]
+    pivot_selection: Option<CTPivotSelection>,
+}
+impl CTSheetView {
+    /// Creates a new `CT_SheetView` instance with xml schema default values.
+    fn new(id: u32) -> Self {
+        Self {
+            show_grid: true,
+            show_zero: true,
+            show_outline_symbol: true,
+            zoom_scale: Zoom::Z100.into(),
+            view_id: id.to_string().as_bytes().into(),
+            show_ruler: true,
+            show_header: true,
+            show_whitespace: true,
+            ..Default::default()
+        }
+    }
+}
+
+/// Represents the properties of a worksheet, including synchronization, transitions, and formatting.
+///
+/// This struct corresponds to the `CT_SheetPr` complex type in the XML schema. It encapsulates
+/// attributes and elements that define the behavior and appearance of a worksheet.
+///
+/// # XML Schema Mapping
+/// The struct maps to the following XML schema definition:
+/// ```xml
+/// <complexType name="CT_SheetPr">
+///     <sequence>
+///         <element name="tabColor" type="CT_Color" minOccurs="0" maxOccurs="1"/>
+///         <element name="outlinePr" type="CT_OutlinePr" minOccurs="0" maxOccurs="1"/>
+///         <element name="pageSetUpPr" type="CT_PageSetUpPr" minOccurs="0" maxOccurs="1"/>
+///     </sequence>
+///     <attribute name="syncHorizontal" type="xsd:boolean" use="optional" default="false"/>
+///     <attribute name="syncVertical" type="xsd:boolean" use="optional" default="false"/>
+///     <attribute name="syncRef" type="ST_Ref" use="optional"/>
+///     <attribute name="transitionEvaluation" type="xsd:boolean" use="optional" default="false"/>
+///     <attribute name="transitionEntry" type="xsd:boolean" use="optional" default="false"/>
+///     <attribute name="published" type="xsd:boolean" use="optional" default="true"/>
+///     <attribute name="codeName" type="xsd:string" use="optional"/>
+///     <attribute name="filterMode" type="xsd:boolean" use="optional" default="false"/>
+///     <attribute name="enableFormatConditionsCalculation" type="xsd:boolean" use="optional" default="true"/>
+/// </complexType>
+/// ```
+///
+/// # Fields
+/// - `sync_horizontal`: Indicates whether horizontal synchronization is enabled (`syncHorizontal`).
+/// - `sync_vertical`: Indicates whether vertical synchronization is enabled (`syncVertical`).
+/// - `sync_ref`: The reference for synchronization (`syncRef`).
+/// - `transition_eval`: Indicates whether transition evaluation is enabled (`transitionEvaluation`).
+/// - `transition_entry`: Indicates whether transition entry is enabled (`transitionEntry`).
+/// - `published`: Indicates whether the sheet is published (`published`).
+/// - `code_name`: The code name of the sheet (`codeName`).
+/// - `filter_mode`: Indicates whether filter mode is enabled (`filterMode`).
+/// - `enable_cond_format_calc`: Indicates whether conditional formatting calculation is enabled (`enableFormatConditionsCalculation`).
+/// - `tab_color`: The color of the sheet tab (`tabColor`).
+/// - `outline_pr`: The outline properties of the sheet (`outlinePr`).
+/// - `page_setup_pr`: The page setup properties of the sheet (`pageSetUpPr`).
+#[derive(Debug, Default, PartialEq, Clone, Eq, XmlWrite)]
+pub struct CTSheetPr {
+    #[xml(name = "syncHorizontal", default_bool = false)]
+    sync_horizontal: bool,
+    #[xml(name = "syncVertical", default_bool = false)]
+    sync_vertical: bool,
+    #[xml(name = "syncRef")]
+    sync_ref: Vec<u8>,
+    #[xml(name = "transitionEvaluation", default_bool = false)]
+    transition_eval: bool,
+    #[xml(name = "transitionEntry", default_bool = false)]
+    transition_entry: bool,
+    #[xml(name = "published", default_bool = true)]
+    published: bool,
+    #[xml(name = "codeName")]
+    code_name: Vec<u8>,
+    #[xml(name = "filterMode", default_bool = false)]
+    filter_mode: bool,
+    #[xml(name = "enableFormatConditionsCalculation", default_bool = true)]
+    enable_cond_format_calc: bool,
+
+    #[xml(element)]
+    tab_color: Option<Color>,
+    #[xml(element)]
+    outline_pr: Option<CTOutlinePr>,
+    #[xml(element)]
+    page_setup_pr: Option<CTPageSetupPr>,
+}
+impl CTSheetPr {
+    /// Creates a new `CT_SheetPr` instance with xml schema default values.
+    pub fn new() -> Self {
+        Self {
+            ..Default::default()
+        }
+    }
+}
+
+/// Represents the dimensions of a worksheet, defining the range of cells that contain data.
+///
+/// This struct corresponds to the `CT_SheetDimension` complex type in the XML schema. It encapsulates
+/// a required attribute `ref` that specifies the cell range of the worksheet's dimensions.
+///
+/// # XML Schema Mapping
+/// The struct maps to the following XML schema definition:
+/// ```xml
+/// <complexType name="CT_SheetDimension">
+///     <attribute name="ref" type="ST_Ref" use="required"/>
+/// </complexType>
+/// ```
+///
+/// # Fields
+/// - `range`: The cell range of the worksheet's dimensions (`ref`).
+#[derive(Debug, PartialEq, Default, Clone, Eq, XmlWrite)]
+pub struct CTSheetDimension {
+    #[xml(name = "ref")]
+    range: Vec<u8>,
+}
+impl CTSheetDimension {
+    /// Creates a new `CT_SheetDimension` instance with xml schema default values.
+    pub fn new() -> Self {
+        Self { range: "A1".into() }
+    }
+}
+
+/// Represents the outline properties of a worksheet, defining how outlines are applied and displayed.
+///
+/// This struct corresponds to the `CT_OutlinePr` complex type in the XML schema. It encapsulates
+/// attributes that control the application of styles, the position of summary rows and columns,
+/// and the visibility of outline symbols.
+///
+/// # XML Schema Mapping
+/// The struct maps to the following XML schema definition:
+/// ```xml
+/// <complexType name="CT_OutlinePr">
+///     <attribute name="applyStyles" type="xsd:boolean" use="optional" default="false"/>
+///     <attribute name="summaryBelow" type="xsd:boolean" use="optional" default="true"/>
+///     <attribute name="summaryRight" type="xsd:boolean" use="optional" default="true"/>
+///     <attribute name="showOutlineSymbols" type="xsd:boolean" use="optional" default="true"/>
+/// </complexType>
+/// ```
+///
+/// # Fields
+/// - `apply_styles`: Indicates whether styles are applied to the outline (`applyStyles`).
+/// - `summary_below`: Indicates whether summary rows are displayed below the detail rows (`summaryBelow`).
+/// - `summary_right`: Indicates whether summary columns are displayed to the right of the detail columns (`summaryRight`).
+/// - `show_outline_symbols`: Indicates whether outline symbols are displayed (`showOutlineSymbols`).
+#[derive(Debug, Default, PartialEq, Clone, Eq, XmlWrite)]
+pub struct CTOutlinePr {
+    #[xml(name = "applyStyles", default_bool = false)]
+    apply_styles: bool,
+    #[xml(name = "summaryBelow", default_bool = true)]
+    summary_below: bool,
+    #[xml(name = "summaryRight", default_bool = true)]
+    summary_right: bool,
+    #[xml(name = "showOutlineSymbols", default_bool = true)]
+    show_outline_symbols: bool,
+}
+
+impl CTOutlinePr {
+    /// Creates a new `CT_OutlinePr` instance with xml schema default values.
+    pub fn new() -> Self {
+        Self {
+            ..Default::default()
+        }
+    }
+}
 
 #[derive(Debug, Default, PartialEq, Clone, Eq)]
 pub struct Sheet {
-    uid: Vec<u8>,
     path: String,
-    code_name: Option<Vec<u8>>,
+    uid: Vec<u8>,
+    code_name: Vec<u8>,
     fit_to_page: bool,
     auto_page_break: bool,
-    dimensions: CellRange,
+    dimensions: Vec<u8>,
     enable_cond_format_calc: bool,
     published: bool,
     sync_vertical: bool,
     sync_horizontal: bool,
-    sync_ref: Option<(Cell, Cell)>,
+    sync_ref: Vec<u8>,
     transition_eval: bool,
     transition_entry: bool,
     filter_mode: bool,
     apply_outline_style: bool,
     show_summary_below: bool, // summary row should be inserted to above when off
     show_summary_right: bool, // sumamry row should be inserted to left when off
-    sheet_views: Vec<SheetView>,
+    sheet_views: Vec<CTSheetView>,
     tab_color: Option<Color>,
     show_outline_symbol: bool,
 }
@@ -464,8 +1108,8 @@ impl<W: Write> XmlWriter<W> for Sheet {
             .write_inner_content::<_, XlsxError>(|writer| {
                 // sheetPr
                 let mut attrs = Vec::with_capacity(9);
-                if let Some(ref code_name) = self.code_name {
-                    attrs.push((b"codeName".as_ref(), code_name.as_ref()));
+                if !self.code_name.is_empty() {
+                    attrs.push((b"codeName".as_ref(), self.code_name.as_ref()));
                 }
                 if !self.enable_cond_format_calc {
                     attrs.push((b"enableFormatConditions".as_ref(), b"0".as_ref()));
@@ -482,10 +1126,8 @@ impl<W: Write> XmlWriter<W> for Sheet {
                 if self.transition_eval {
                     attrs.push((b"transitionEvaluation".as_ref(), b"1".as_ref()));
                 }
-                let sync_ref_bytes;
-                if let Some(ref sync_ref) = self.sync_ref {
-                    sync_ref_bytes = Sheet::cell_range_to_cell_reference(sync_ref);
-                    attrs.push((b"syncRef".as_ref(), sync_ref_bytes.as_ref()));
+                if !self.sync_ref.is_empty() {
+                    attrs.push((b"syncRef".as_ref(), self.sync_ref.as_ref()));
                 }
                 if self.sync_vertical {
                     attrs.push((b"syncVertical".as_ref(), b"1".as_ref()));
@@ -547,28 +1189,17 @@ impl<W: Write> XmlWriter<W> for Sheet {
                     if !view.show_outline_symbol {
                         attrs.push((b"showOutlineSymbols".as_ref(), b"0".as_ref()));
                     }
-                    let grid_color;
-                    if view.grid_color != GridlineColor::Automatic {
-                        grid_color = (view.grid_color.clone() as u8).to_string();
-                        attrs.push((b"colorId".as_ref(), grid_color.as_ref()));
+                    if !view.color_id.is_empty() {
+                        attrs.push((b"colorId".as_ref(), view.color_id.as_ref()));
                     }
                     if !view.show_whitespace {
                         attrs.push((b"showWhiteSpace".as_ref(), b"0".as_ref()));
                     }
-                    if let Some(ref view_type) = view.view {
-                        let view = match view_type {
-                            View::Normal => b"".as_ref(),
-                            View::PageBreakPreview => b"pageBreakPreview".as_ref(),
-                            View::PageLayout => b"pageLayout".as_ref(),
-                        };
-                        if view != b"" {
-                            attrs.push((b"view".as_ref(), view));
-                        }
+                    if view.view != b"normal" && !view.view.is_empty() {
+                        attrs.push((b"view".as_ref(), view.view.as_ref()));
                     }
-                    let top_left_cell;
-                    if let Some(ref cell) = view.top_left_cell {
-                        top_left_cell = Sheet::cell_to_cell_reference(*cell);
-                        attrs.push((b"topLeftCell".as_ref(), &top_left_cell));
+                    if !view.top_left_cell.is_empty() {
+                        attrs.push((b"topLeftCell".as_ref(), view.top_left_cell.as_ref()));
                     }
                     if view.zoom_scale != <Zoom as Into<Vec<u8>>>::into(Zoom::Z100) {
                         attrs.push((b"zoomScale".as_ref(), &view.zoom_scale));
@@ -611,26 +1242,14 @@ impl<W: Write> XmlWriter<W> for Sheet {
 impl Sheet {
     fn new(path: &str) -> Self {
         Self {
-            uid: vec![],
-            tab_color: None,
             path: path.into(),
-            apply_outline_style: false,
             show_summary_below: true,
             show_summary_right: true,
-            fit_to_page: false,
             auto_page_break: true,
-            dimensions: ((0, 0), (0, 0)),
             enable_cond_format_calc: true,
             published: true,
-            code_name: None,
-            sheet_views: Vec::new(),
-            sync_vertical: false,
-            sync_horizontal: false,
-            sync_ref: None,
-            transition_eval: false,
-            transition_entry: false,
-            filter_mode: false,
             show_outline_symbol: true,
+            ..Default::default()
         }
     }
 
@@ -660,7 +1279,7 @@ impl Sheet {
                     for attr in e.attributes() {
                         if let Ok(a) = attr {
                             match a.key.as_ref() {
-                                b"codeName" => self.code_name = Some(a.value.into()),
+                                b"codeName" => self.code_name = a.value.into(),
                                 b"enableFormatConditions" => {
                                     self.enable_cond_format_calc = *a.value == *b"1"
                                 }
@@ -668,10 +1287,7 @@ impl Sheet {
                                 b"published" => self.published = *a.value == *b"1",
                                 b"syncHorizontal" => self.sync_horizontal = *a.value == *b"1",
                                 b"syncVertical" => self.sync_vertical = *a.value == *b"1",
-                                b"syncRef" => {
-                                    self.sync_ref =
-                                        Some(Sheet::cell_reference_to_cell_range(&a.value)?)
-                                }
+                                b"syncRef" => self.sync_ref = a.value.into(),
                                 b"transitionEvaluation" => self.transition_eval = *a.value == *b"1",
                                 b"transitionEntry" => self.transition_entry = *a.value == *b"1",
                                 _ => (),
@@ -683,9 +1299,7 @@ impl Sheet {
                     for attr in e.attributes() {
                         if let Ok(a) = attr {
                             match a.key.as_ref() {
-                                b"ref" => {
-                                    self.dimensions = Sheet::cell_reference_to_cell_range(&a.value)?
-                                }
+                                b"ref" => self.dimensions = a.value.into(),
                                 _ => (),
                             }
                         }
@@ -803,196 +1417,16 @@ impl Sheet {
                                             b"showWhiteSpace" => {
                                                 sheet_view.show_whitespace = *a.value == *b"1";
                                             }
-                                            b"view" => match a.value.as_ref() {
-                                                b"pageBreakPreview" => {
-                                                    sheet_view.view = Some(View::PageBreakPreview)
-                                                }
-                                                b"pageLayout" => {
-                                                    sheet_view.view = Some(View::PageLayout)
-                                                }
-                                                b"normal" => sheet_view.view = Some(View::Normal),
-                                                _ => (),
-                                            },
+                                            b"defaultGridColor" => {
+                                                sheet_view.use_default_grid_color =
+                                                    *a.value == *b"1";
+                                            }
+                                            b"view" => sheet_view.view = a.value.into(),
                                             b"topLeftCell" => {
-                                                sheet_view.top_left_cell =
-                                                    Some(Sheet::cell_reference_to_cell(&a.value)?);
+                                                sheet_view.top_left_cell = a.value.into();
                                             }
                                             b"colorId" => {
-                                                match a.value.as_ref() {
-                                                    b"0" => {
-                                                        sheet_view.grid_color =
-                                                            GridlineColor::Automatic
-                                                    }
-                                                    b"8" => {
-                                                        sheet_view.grid_color = GridlineColor::Black
-                                                    }
-                                                    b"15" => {
-                                                        sheet_view.grid_color =
-                                                            GridlineColor::Turquoise
-                                                    }
-                                                    b"60" => {
-                                                        sheet_view.grid_color = GridlineColor::Brown
-                                                    }
-                                                    b"14" => {
-                                                        sheet_view.grid_color = GridlineColor::Pink
-                                                    }
-                                                    b"59" => {
-                                                        sheet_view.grid_color =
-                                                            GridlineColor::OliveGreen
-                                                    }
-                                                    b"58" => {
-                                                        sheet_view.grid_color =
-                                                            GridlineColor::DarkGreen
-                                                    }
-                                                    b"56" => {
-                                                        sheet_view.grid_color =
-                                                            GridlineColor::DarkTeal
-                                                    }
-                                                    b"18" => {
-                                                        sheet_view.grid_color =
-                                                            GridlineColor::DarkBlue
-                                                    }
-                                                    b"62" => {
-                                                        sheet_view.grid_color =
-                                                            GridlineColor::Indigo
-                                                    }
-                                                    b"63" => {
-                                                        sheet_view.grid_color =
-                                                            GridlineColor::Gray80
-                                                    }
-                                                    b"23" => {
-                                                        sheet_view.grid_color =
-                                                            GridlineColor::Gray50
-                                                    }
-                                                    b"55" => {
-                                                        sheet_view.grid_color =
-                                                            GridlineColor::Gray40
-                                                    }
-                                                    b"22" => {
-                                                        sheet_view.grid_color =
-                                                            GridlineColor::Gray25
-                                                    }
-                                                    b"9" => {
-                                                        sheet_view.grid_color = GridlineColor::White
-                                                    }
-                                                    b"31" => {
-                                                        sheet_view.grid_color =
-                                                            GridlineColor::IceBlue
-                                                    }
-                                                    b"12" => {
-                                                        sheet_view.grid_color = GridlineColor::Blue
-                                                    }
-                                                    b"21" => {
-                                                        sheet_view.grid_color = GridlineColor::Teal
-                                                    }
-                                                    b"30" => {
-                                                        sheet_view.grid_color =
-                                                            GridlineColor::OceanBlue
-                                                    }
-                                                    b"25" => {
-                                                        sheet_view.grid_color = GridlineColor::Plum
-                                                    }
-                                                    b"46" => {
-                                                        sheet_view.grid_color =
-                                                            GridlineColor::Lavender
-                                                    }
-                                                    b"20" => {
-                                                        sheet_view.grid_color =
-                                                            GridlineColor::Violet
-                                                    }
-                                                    b"54" => {
-                                                        sheet_view.grid_color =
-                                                            GridlineColor::BlueGray
-                                                    }
-                                                    b"48" => {
-                                                        sheet_view.grid_color =
-                                                            GridlineColor::LightBlue
-                                                    }
-                                                    b"40" => {
-                                                        sheet_view.grid_color =
-                                                            GridlineColor::SkyBlue
-                                                    }
-                                                    b"44" => {
-                                                        sheet_view.grid_color =
-                                                            GridlineColor::PaleBlue
-                                                    }
-                                                    b"29" => {
-                                                        sheet_view.grid_color = GridlineColor::Coral
-                                                    }
-                                                    b"16" => {
-                                                        sheet_view.grid_color =
-                                                            GridlineColor::DarkRed
-                                                    }
-                                                    b"49" => {
-                                                        sheet_view.grid_color = GridlineColor::Aqua
-                                                    }
-                                                    b"27" => {
-                                                        sheet_view.grid_color =
-                                                            GridlineColor::LightTurquoise
-                                                    }
-                                                    b"28" => {
-                                                        sheet_view.grid_color =
-                                                            GridlineColor::DarkPurple
-                                                    }
-                                                    b"57" => {
-                                                        sheet_view.grid_color =
-                                                            GridlineColor::SeaGreen
-                                                    }
-                                                    b"42" => {
-                                                        sheet_view.grid_color =
-                                                            GridlineColor::LightGreen
-                                                    }
-                                                    b"11" => {
-                                                        sheet_view.grid_color =
-                                                            GridlineColor::BrightGreen
-                                                    }
-                                                    b"13" => {
-                                                        sheet_view.grid_color =
-                                                            GridlineColor::Yellow
-                                                    }
-                                                    b"26" => {
-                                                        sheet_view.grid_color = GridlineColor::Ivory
-                                                    }
-                                                    b"43" => {
-                                                        sheet_view.grid_color =
-                                                            GridlineColor::LightYellow
-                                                    }
-                                                    b"19" => {
-                                                        sheet_view.grid_color =
-                                                            GridlineColor::DarkYellow
-                                                    }
-                                                    b"50" => {
-                                                        sheet_view.grid_color = GridlineColor::Lime
-                                                    }
-                                                    b"53" => {
-                                                        sheet_view.grid_color =
-                                                            GridlineColor::Orange
-                                                    }
-                                                    b"52" => {
-                                                        sheet_view.grid_color =
-                                                            GridlineColor::LightOrange
-                                                    }
-                                                    b"51" => {
-                                                        sheet_view.grid_color = GridlineColor::Gold
-                                                    }
-                                                    b"47" => {
-                                                        sheet_view.grid_color = GridlineColor::Tan
-                                                    }
-                                                    b"45" => {
-                                                        sheet_view.grid_color = GridlineColor::Rose
-                                                    }
-                                                    b"24" => {
-                                                        sheet_view.grid_color =
-                                                            GridlineColor::Periwinkle
-                                                    }
-                                                    b"10" => {
-                                                        sheet_view.grid_color = GridlineColor::Red
-                                                    }
-                                                    b"17" => {
-                                                        sheet_view.grid_color = GridlineColor::Green
-                                                    }
-                                                    _ => (),
-                                                };
+                                                sheet_view.color_id = a.value.into();
                                             }
 
                                             b"showZeros" => {
@@ -1024,44 +1458,14 @@ impl Sheet {
                                                     if let Ok(a) = attr {
                                                         match a.key.as_ref() {
                                                             b"activePane" => {
-                                                                match a.value.as_ref() {
-                                                                    b"bottomLeft" => {
-                                                                        pane.active_pane =
-                                                                            PanePosition::BottomLeft
-                                                                    }
-                                                                    b"bottomRight" => pane
-                                                                        .active_pane =
-                                                                        PanePosition::BottomRight,
-                                                                    b"topLeft" => {
-                                                                        pane.active_pane =
-                                                                            PanePosition::TopLeft
-                                                                    }
-                                                                    b"topRight" => {
-                                                                        pane.active_pane =
-                                                                            PanePosition::TopRight
-                                                                    }
-                                                                    _ => (),
-                                                                }
+                                                                pane.active_pane = a.value.into();
                                                             }
-                                                            b"state" => match a.value.as_ref() {
-                                                                b"frozen" => {
-                                                                    pane.state = PaneState::Frozen
-                                                                }
-                                                                b"split" => {
-                                                                    pane.state = PaneState::Split
-                                                                }
-                                                                b"frozenSplit" => {
-                                                                    pane.state =
-                                                                        PaneState::FrozenSplit
-                                                                }
-                                                                _ => (),
-                                                            },
+                                                            b"state" => {
+                                                                pane.state = a.value.into();
+                                                            }
+
                                                             b"topLeftCell" => {
-                                                                pane.top_left_cell = Some(
-                                                                    Sheet::cell_reference_to_cell(
-                                                                        &a.value,
-                                                                    )?,
-                                                                )
+                                                                pane.top_left_cell = a.value.into();
                                                             }
                                                             b"xSplit" => {
                                                                 pane.x_split = a.value.to_vec()
@@ -1086,37 +1490,17 @@ impl Sheet {
                                                 for attr in e.attributes() {
                                                     if let Ok(a) = attr {
                                                         match a.key.as_ref() {
-                                                            b"pane" => match a.value.as_ref() {
-                                                                b"bottomLeft" => {
-                                                                    selection.pane =
-                                                                        PanePosition::BottomLeft
-                                                                }
-                                                                b"bottomRight" => {
-                                                                    selection.pane =
-                                                                        PanePosition::BottomRight
-                                                                }
-                                                                b"topLeft" => {
-                                                                    selection.pane =
-                                                                        PanePosition::TopLeft
-                                                                }
-                                                                b"topRight" => {
-                                                                    selection.pane =
-                                                                        PanePosition::TopRight
-                                                                }
-                                                                _ => (),
-                                                            },
+                                                            b"pane" => {
+                                                                selection.pane = a.value.into()
+                                                            }
                                                             b"activeCellId" => {
                                                                 selection.cell_id = a.value.into();
                                                             }
                                                             b"activeCell" => {
-                                                                selection.cell = Some(
-                                                                    Sheet::cell_reference_to_cell(
-                                                                        &a.value,
-                                                                    )?,
-                                                                );
+                                                                selection.cell = a.value.into();
                                                             }
                                                             b"sqref" => {
-                                                                selection.sqref = Sheet::cell_group_to_list_cell_range(&a.value)?;
+                                                                selection.sqref = a.value.into();
                                                             }
 
                                                             _ => (),
@@ -1136,23 +1520,7 @@ impl Sheet {
                                                     if let Ok(a) = attr {
                                                         match a.key.as_ref() {
                                                             b"pane" => {
-                                                                match a.value.as_ref() {
-                                                                    b"bottomLeft" => {
-                                                                        pivot.pane =
-                                                                            PanePosition::BottomLeft
-                                                                    }
-                                                                    b"bottomRight" => pivot.pane =
-                                                                        PanePosition::BottomRight,
-                                                                    b"topLeft" => {
-                                                                        pivot.pane =
-                                                                            PanePosition::TopLeft
-                                                                    }
-                                                                    b"topRight" => {
-                                                                        pivot.pane =
-                                                                            PanePosition::TopRight
-                                                                    }
-                                                                    _ => (),
-                                                                }
+                                                                pivot.pane = a.value.into();
                                                             }
                                                             b"showHeader" => {
                                                                 pivot.show_header =
@@ -1196,25 +1564,9 @@ impl Sheet {
                                                                 pivot.click = a.value.into();
                                                             }
                                                             b"r:id" => {
-                                                                pivot.rid = Some(a.value.into());
+                                                                pivot.rid = a.value.into();
                                                             }
-                                                            b"axis" => match a.value.as_ref() {
-                                                                b"axisCol" => {
-                                                                    pivot.axis = Some(Axis::AxisCol)
-                                                                }
-                                                                b"axisPage" => {
-                                                                    pivot.axis =
-                                                                        Some(Axis::AxisPage)
-                                                                }
-                                                                b"axisRow" => {
-                                                                    pivot.axis = Some(Axis::AxisRow)
-                                                                }
-                                                                b"axisValues" => {
-                                                                    pivot.axis =
-                                                                        Some(Axis::AxisValues)
-                                                                }
-                                                                _ => (),
-                                                            },
+                                                            b"axis" => pivot.axis = a.value.into(),
 
                                                             _ => (),
                                                         }
@@ -1236,36 +1588,12 @@ impl Sheet {
                                                             for attr in e.attributes() {
                                                                 if let Ok(a) = attr {
                                                                     match a.key.as_ref() {
-                                                                        b"field" => {
-                                                                            area.field = Some(
-                                                                                a.value.to_vec(),
-                                                                            )
-                                                                        }
+                                                                        b"field" =>
+                                                                            area.field =a.value.to_vec(),
+
+
                                                                         b"type" => {
-                                                                            match a.value.as_ref() {
-                                                                                b"all" => area
-                                                                                    .pivot_type =
-                                                                                    PivotType::All,
-                                                                                b"button" => area
-                                                                                    .pivot_type =
-                                                                                    PivotType::Button,
-                                                                                b"data" => area
-                                                                                    .pivot_type =
-                                                                                    PivotType::Data,
-                                                                                b"none" => area
-                                                                                    .pivot_type =
-                                                                                    PivotType::None,
-                                                                                b"normal" => area
-                                                                                    .pivot_type =
-                                                                                    PivotType::Normal,
-                                                                                b"origin" => area
-                                                                                    .pivot_type =
-                                                                                    PivotType::Origin,
-                                                                                b"topRight" => area
-                                                                                    .pivot_type =
-                                                                                    PivotType::TopRight,
-                                                                                _ => (),
-                                                                            }
+                                                                            area.pivot_type = a.value.into();
                                                                         }
                                                                         b"dataOnly" => {
                                                                             area.use_data_only =
@@ -1292,27 +1620,20 @@ impl Sheet {
                                                                                 *a.value == *b"1"
                                                                         }
                                                                         b"offset" => {
-                                                                            let offset = Sheet::cell_reference_to_cell_range(&a.value)?;
-                                                                            area.offset = offset;
+                                                                            area.offset = a.value.into();
                                                                         }
                                                                         // This binary string breaks rustfmt with line length
                                                                         b"collapsedLevelsAreSubtotals" => {
                                                                             area.collapsed_are_subtotal = *a.value == *b"1";
                                                                         }
                                                                         b"axis" => {
-                                                                            match a.value.as_ref() {
-                                                                                b"axisCol" =>  area.axis = Some(Axis::AxisCol),
-                                                                                b"axisPage" => area.axis = Some(Axis::AxisPage),
-                                                                                b"axisRow" => area.axis = Some(Axis::AxisRow),
-                                                                                b"axisValues" =>  area.axis = Some(Axis::AxisValues),
-                                                                                _ => ()
-                                                                            }
+                                                                            area.axis = a.value.into();
                                                                         }
-                                                                        b"fieldPosition" => {
-                                                                            area.field_pos = Some(
+                                                                        b"fieldPosition" =>
+                                                                            area.field_pos =
                                                                                 a.value.to_vec(),
-                                                                            )
-                                                                        }
+
+
                                                                         _ => (),
                                                                     }
                                                                 }
@@ -1326,14 +1647,15 @@ impl Sheet {
                                                             if e.local_name().as_ref()
                                                                 == b"reference" =>
                                                         {
+                                                            pivot.area.reference_collection =
+                                                                References::new();
                                                             let mut reference = Reference::new();
                                                             for attr in e.attributes() {
                                                                 if let Ok(a) = attr {
                                                                     match a.key.as_ref() {
                                                                         b"field" => {
-                                                                            reference.field = Some(
-                                                                                a.value.to_vec(),
-                                                                            )
+                                                                            reference.field =
+                                                                                a.value.into();
                                                                         }
                                                                         b"selected" => {
                                                                             reference.selected =
@@ -1424,8 +1746,8 @@ impl Sheet {
                                                                             if let Ok(a) = attr {
                                                                                 match a.key.as_ref() {
                                                                                             b"v" => {
-                                                                                                reference.values.push(
-                                                                                                    a.value.to_vec()
+                                                                                                reference.selected_items.push(
+                                                                                                    SelectedItem { item: a.value.into() }
                                                                                                 )
                                                                                             },
                                                                                             _ => ()
@@ -1440,6 +1762,7 @@ impl Sheet {
                                                                     {
                                                                         pivot
                                                                             .area
+                                                                            .reference_collection
                                                                             .references
                                                                             .push(reference);
                                                                         break;
@@ -1464,6 +1787,13 @@ impl Sheet {
                                                             if e.local_name().as_ref()
                                                                 == b"pivotArea" =>
                                                         {
+                                                            let count = pivot
+                                                                .area
+                                                                .reference_collection
+                                                                .references
+                                                                .len();
+                                                            pivot.area.reference_collection.count =
+                                                                count.to_string().as_bytes().into();
                                                             pivot.area = area;
                                                             break;
                                                         }

@@ -6,7 +6,7 @@ use syn::{
 };
 /// Derive macro for generating XML serialization code.
 ///
-/// This macro generates an implementation of the `XmlWriter` trait for the annotated struct.
+/// This macro generates an implementation of the `XmlWrite` trait for the annotated struct.
 /// The struct's fields can be customized using the `#[xml(...)]` attribute.
 ///
 /// # Attributes
@@ -20,7 +20,7 @@ use syn::{
 /// - **Usage**: Applied to struct fields.
 /// - **Example**:
 ///   ```rust
-///   #[derive(XmlWriter)]
+///   #[derive(XmlWrite)]
 ///   struct MyStruct {
 ///       #[x(name = "custom_name")]
 ///       field: i32,
@@ -36,7 +36,7 @@ use syn::{
 /// - **Usage**: Applied to struct fields.
 /// - **Example**:
 ///   ```rust
-///   #[derive(XmlWriter)]
+///   #[derive(XmlWrite)]
 ///   struct MyStruct {
 ///       #[x(default = true)]
 ///       active: bool,
@@ -51,7 +51,7 @@ use syn::{
 /// - **Usage**: Applied to struct fields.
 /// - **Example**:
 ///   ```rust
-///   #[derive(XmlWriter)]
+///   #[derive(XmlWrite)]
 ///   struct MyStruct {
 ///       #[xml(default_bytes = b"0")]
 ///       active: Vec<u8>,
@@ -66,7 +66,7 @@ use syn::{
 /// - **Usage**: Applied to struct fields.
 /// - **Example**:
 ///   ```rust
-///   #[derive(XmlWriter)]
+///   #[derive(XmlWrite)]
 ///   struct MyStruct {
 ///       #[xml(element)]
 ///       active: MySubStruct,
@@ -78,7 +78,7 @@ use syn::{
 /// - **Usage**: Applied to a single struct fields and the following fields are as if `xml(element)`` is applied to each following field.       
 /// - **Example**:
 ///   ```rust
-///   #[derive(XmlWriter)]
+///   #[derive(XmlWrite)]
 ///   struct MyStruct {
 ///       #[xml(following_elements)]
 ///       active: MySubStruct,
@@ -89,11 +89,25 @@ use syn::{
 ///   }
 ///   ```
 ///
+/// ## `#[xml(skip)]`
+/// - **Purpose**: Specifies to skip the serialization of a field.
+/// - **Usage**: Applied to a single struct fields.       
+/// - **Example**:
+///   ```rust
+///   #[derive(XmlWrite)]
+///   struct MyStruct {
+///       #[xml(skip)]
+///       extra_info: String,
+///   }
+///   ```
+/// - **Notes**:
+///   - The field ignores the other attribute's options
+///
 /// # Examples
 ///
 /// Basic usage:
 /// ```rust
-/// #[derive(XmlWriter)]
+/// #[derive(XmlWrite)]
 /// struct MyStruct {
 ///     #[xml(name = "active_pane", default = true)]
 ///     active: bool,
@@ -123,6 +137,9 @@ pub fn derive_xml_writer(input: TokenStream) -> TokenStream {
                 }
                 Ok(())
             })
+        } else if attr.path().is_ident("doc") {
+            // Ignore `#[doc]` attributes (doc comments)
+            Ok(())
         } else {
             Err(Error::new(
                 attr.span(),
@@ -161,6 +178,7 @@ pub fn derive_xml_writer(input: TokenStream) -> TokenStream {
         let mut default_bool = None;
         let mut default_bytes = None;
         let mut element = false;
+        let mut skip = false;
         for attr in &field.attrs {
             let result = if attr.path().is_ident("xml") {
                 attr.parse_nested_meta(|meta| {
@@ -170,6 +188,8 @@ pub fn derive_xml_writer(input: TokenStream) -> TokenStream {
                         default_bytes = Some(meta.value()?.parse::<LitByteStr>()?);
                     } else if meta.path.is_ident("name") {
                         field_name_str = meta.value()?.parse::<LitStr>()?.value();
+                    } else if meta.path.is_ident("skip") {
+                        skip = true;
                     } else if meta.path.is_ident("following_elements") {
                         following_elements = true;
                     } else if meta.path.is_ident("element") {
@@ -182,6 +202,9 @@ pub fn derive_xml_writer(input: TokenStream) -> TokenStream {
                     }
                     Ok(())
                 })
+            } else if attr.path().is_ident("doc") {
+                // Ignore `#[doc]` attributes (doc comments)
+                Ok(())
             } else {
                 Err(Error::new(
                     attr.span(),
@@ -194,6 +217,11 @@ pub fn derive_xml_writer(input: TokenStream) -> TokenStream {
             if let Err(e) = result {
                 panic!("Failed to parse: {}", e);
             }
+        }
+
+        // Ignore fields marked with `#[xml(skip)]`
+        if skip {
+            continue;
         }
 
         // Generate the logic for writing the field to XML attributes

@@ -9,6 +9,8 @@ mod xml_writer_derive {
     #[derive(XmlWrite)]
     #[xml(name = "ex")]
     struct Example {
+        #[xml(skip)]
+        help: String,
         #[xml(name = "activePane")]
         active_pane: bool,
         #[xml(default_bool = true)]
@@ -35,6 +37,7 @@ mod xml_writer_derive {
     #[test]
     fn test_xml_write_derive() {
         let sheet = Example {
+            help: "DO NOT SHOW".into(),
             active_pane: false,
             x_split: true,
             value_test: b"01234".to_vec(),
