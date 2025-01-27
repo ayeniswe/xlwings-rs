@@ -331,36 +331,28 @@ impl TryFrom<Vec<u8>> for View {
 /// - `top_left_cell`: The top-left cell visible in the pane (`topLeftCell`).
 /// - `active_pane`: The active pane (`activePane`).
 /// - `state`: The state of the pane (`state`), e.g., "split", "frozen".
-///
-/// # Example
-/// ```rust
-/// use my_crate::Pane;
-///
-/// let pane = Pane {
-///     x_split: b"0".to_vec(),
-///     y_split: b"0".to_vec(),
-///     top_left_cell: b"A1".to_vec(),
-///     active_pane: b"topLeft".to_vec(),
-///     state: b"split".to_vec(),
-/// };
 /// ```
 #[derive(Debug, Default, Clone, PartialEq, Eq, XmlWrite)]
-pub(crate) struct Pane {
+pub(crate) struct CTPane {
     #[xml(name = "xSplit", default_bytes = b"0")]
     x_split: Vec<u8>,
     #[xml(name = "ySplit", default_bytes = b"0")]
     y_split: Vec<u8>,
     #[xml(name = "topLeftCell")]
     top_left_cell: Vec<u8>,
-    #[xml(name = "activePane", default_bytes = b"topLeft")]
+    #[xml(name = "activePCTane", default_bytes = b"topLeft")]
     active_pane: Vec<u8>,
     #[xml(name = "state", default_bytes = b"split")]
     state: Vec<u8>,
 }
-impl Pane {
-    /// Creates a new `Pane` instance with xml schema default values.
+impl CTPane {
+    /// Creates a new `CT_Pane` instance with xml schema default values.
     pub fn new() -> Self {
         Self {
+            x_split: b"0".into(),
+            y_split: b"0".into(),
+            active_pane: b"topLeft".into(),
+            state: b"split".into(),
             ..Default::default()
         }
     }
@@ -390,7 +382,7 @@ impl Pane {
 /// - `sqref`: The range of selected cells (`sqref`).
 /// ```
 #[derive(Debug, Default, PartialEq, Clone, Eq, XmlWrite)]
-pub(crate) struct Selection {
+pub(crate) struct CTSelection {
     #[xml(name = "pane")]
     pane: Vec<u8>,
     #[xml(name = "activeCell")]
@@ -400,10 +392,12 @@ pub(crate) struct Selection {
     #[xml(name = "sqref", default_bytes = b"A1")]
     sqref: Vec<u8>,
 }
-impl Selection {
-    /// Creates a new `Selection` instance with xml schema default values.
+impl CTSelection {
+    /// Creates a new `CT_Selection` instance with xml schema default values.
     pub(crate) fn new() -> Self {
         Self {
+            sqref: b"A1".into(),
+            cell_id: b"0".into(),
             ..Default::default()
         }
     }
@@ -535,6 +529,7 @@ impl CTPivotAreaReference {
     /// Creates a new `CT_PivotAreaReference` instance with xml schema default values.
     pub(crate) fn new() -> Self {
         Self {
+            selected: true,
             ..Default::default()
         }
     }
@@ -653,6 +648,8 @@ impl CTPivotArea {
     pub(crate) fn new() -> Self {
         Self {
             outline: true,
+            use_data_only: true,
+            pivot_type: b"normal".into(),
             ..Default::default()
         }
     }
@@ -754,6 +751,17 @@ impl CTPivotSelection {
     /// Creates a new `CT_PivotSelection` instance with xml schema default values.
     pub(crate) fn new() -> Self {
         Self {
+            pane: b"topLeft".into(),
+            count: b"0".into(),
+            dimension: b"0".into(),
+            start: b"0".into(),
+            min: b"0".into(),
+            max: b"0".into(),
+            row: b"0".into(),
+            col: b"0".into(),
+            prev_row: b"0".into(),
+            prev_col: b"0".into(),
+            click: b"0".into(),
             ..Default::default()
         }
     }
@@ -865,9 +873,9 @@ pub(crate) struct CTSheetView {
     view_id: Vec<u8>,
 
     #[xml(element)]
-    pane: Option<Pane>,
+    pane: Option<CTPane>,
     #[xml(element)]
-    selection: Option<Selection>,
+    selection: Option<CTSelection>,
     #[xml(element)]
     pivot_selection: Option<CTPivotSelection>,
 }
@@ -877,12 +885,53 @@ impl CTSheetView {
         Self {
             show_grid: true,
             show_zero: true,
+            view: b"normal".into(),
+            use_default_grid_color: true,
             show_outline_symbol: true,
-            zoom_scale: Zoom::Z100.into(),
+            zoom_scale: b"100".into(),
+            zoom_scale_normal: b"0".into(),
+            zoom_scale_sheet: b"0".into(),
+            zoom_scale_page: b"0".into(),
+            color_id: b"64".into(),
             view_id: id.to_string().as_bytes().into(),
             show_ruler: true,
             show_header: true,
             show_whitespace: true,
+            ..Default::default()
+        }
+    }
+}
+
+/// Represents the page setup properties of a worksheet, defining how the worksheet is paginated.
+///
+/// This struct corresponds to the `CT_PageSetUpPr` complex type in the XML schema. It encapsulates
+/// attributes that control automatic page breaks and whether the content should be fit to the page.
+///
+/// # XML Schema Mapping
+/// The struct maps to the following XML schema definition:
+/// ```xml
+/// <complexType name="CT_PageSetUpPr">
+///     <attribute name="autoPageBreaks" type="xsd:boolean" use="optional" default="true"/>
+///     <attribute name="fitToPage" type="xsd:boolean" use="optional" default="false"/>
+/// </complexType>
+/// ```
+///
+/// # Fields
+/// - `auto_page_breaks`: Indicates whether automatic page breaks are enabled (`autoPageBreaks`).
+/// - `fit_to_page`: Indicates whether the content should be fit to the page (`fitToPage`).
+#[derive(Debug, Default, PartialEq, Clone, Eq, XmlWrite)]
+pub struct CTPageSetupPr {
+    #[xml(name = "autoPageBreaks", default_bool = true)]
+    auto_page_breaks: bool,
+    #[xml(name = "fitToPage", default_bool = false)]
+    fit_to_page: bool,
+}
+
+impl CTPageSetupPr {
+    /// Creates a new `CT_PageSetupPr` instance with xml schema default values.
+    pub fn new() -> Self {
+        Self {
+            auto_page_breaks: true,
             ..Default::default()
         }
     }
@@ -959,6 +1008,8 @@ impl CTSheetPr {
     /// Creates a new `CT_SheetPr` instance with xml schema default values.
     pub fn new() -> Self {
         Self {
+            published: true,
+            enable_cond_format_calc: true,
             ..Default::default()
         }
     }
@@ -1029,6 +1080,9 @@ impl CTOutlinePr {
     /// Creates a new `CT_OutlinePr` instance with xml schema default values.
     pub fn new() -> Self {
         Self {
+            summary_below: true,
+            summary_right: true,
+            show_outline_symbols: true,
             ..Default::default()
         }
     }
@@ -1051,8 +1105,8 @@ pub struct Sheet {
     transition_entry: bool,
     filter_mode: bool,
     apply_outline_style: bool,
-    show_summary_below: bool, // summary row should be inserted to above when off
-    show_summary_right: bool, // sumamry row should be inserted to left when off
+    show_summary_below: bool,
+    show_summary_right: bool,
     sheet_views: Vec<CTSheetView>,
     tab_color: Option<Color>,
     show_outline_symbol: bool,
@@ -1367,7 +1421,7 @@ impl Sheet {
                     loop {
                         view_buf.clear();
                         let event = xml.read_event_into(&mut view_buf);
-                        let mut sheet_view = SheetView::new(0);
+                        let mut sheet_view = CTSheetView::new(0);
                         match event {
                             Ok(Event::Empty(ref e)) | Ok(Event::Start(ref e))
                                 if e.local_name().as_ref() == b"sheetView" =>
@@ -1453,7 +1507,7 @@ impl Sheet {
                                             Ok(Event::Empty(ref e))
                                                 if e.local_name().as_ref() == b"pane" =>
                                             {
-                                                let mut pane = Pane::new();
+                                                let mut pane = CTPane::new();
                                                 for attr in e.attributes() {
                                                     if let Ok(a) = attr {
                                                         match a.key.as_ref() {
@@ -1486,7 +1540,7 @@ impl Sheet {
                                             Ok(Event::Start(ref e))
                                                 if e.local_name().as_ref() == b"selection" =>
                                             {
-                                                let mut selection = Selection::new();
+                                                let mut selection = CTSelection::new();
                                                 for attr in e.attributes() {
                                                     if let Ok(a) = attr {
                                                         match a.key.as_ref() {
@@ -1515,7 +1569,7 @@ impl Sheet {
                                             Ok(Event::Start(ref e))
                                                 if e.local_name().as_ref() == b"pivotSelection" =>
                                             {
-                                                let mut pivot = PivotSelection::new();
+                                                let mut pivot = CTPivotSelection::new();
                                                 for attr in e.attributes() {
                                                     if let Ok(a) = attr {
                                                         match a.key.as_ref() {
@@ -1578,7 +1632,7 @@ impl Sheet {
                                                 ///////////////
                                                 let mut area_buf = Vec::with_capacity(1024);
                                                 loop {
-                                                    let mut area = PivotArea::new();
+                                                    let mut area = CTPivotArea::new();
                                                     area_buf.clear();
                                                     match xml.read_event_into(&mut area_buf) {
                                                         Ok(Event::Start(ref e))
@@ -1648,8 +1702,9 @@ impl Sheet {
                                                                 == b"reference" =>
                                                         {
                                                             pivot.area.reference_collection =
-                                                                References::new();
-                                                            let mut reference = Reference::new();
+                                                                CTPivotAreaReferences::new();
+                                                            let mut reference =
+                                                                CTPivotAreaReference::new();
                                                             for attr in e.attributes() {
                                                                 if let Ok(a) = attr {
                                                                     match a.key.as_ref() {
@@ -1747,7 +1802,7 @@ impl Sheet {
                                                                                 match a.key.as_ref() {
                                                                                             b"v" => {
                                                                                                 reference.selected_items.push(
-                                                                                                    SelectedItem { item: a.value.into() }
+                                                                                                    CTIndex { item: a.value.into() }
                                                                                                 )
                                                                                             },
                                                                                             _ => ()

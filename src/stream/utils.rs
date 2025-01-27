@@ -1,7 +1,7 @@
 //! The module includes extra utility tooling to help glue logic together
 use super::xlsx::errors::XlsxError;
 use quick_xml::{parser::Parser, Reader, Writer};
-use std::io::{BufReader, Cursor, Read, Seek, SeekFrom, Write};
+use std::io::{BufRead, BufReader, Cursor, Read, Seek, SeekFrom, Write};
 use zip::{
     read::{ZipFile, ZipFileSeek},
     result::ZipError,
@@ -37,12 +37,18 @@ pub(crate) fn xml_reader<'a, RS: Read + Seek>(
 }
 
 pub trait XmlWriter<W: Write> {
-    /// Allows us to piece up how we will write from objects to xml
+    /// Allows us to write objects to xml
     fn write_xml<'a>(
         &self,
         writer: &'a mut Writer<W>,
         tag_name: &'a str,
     ) -> Result<&'a mut Writer<W>, XlsxError>;
+}
+
+pub trait XmlReader<B: BufRead> {
+    /// Allows us to read xml into a custom object
+    fn read_xml<'a>(&mut self, tag_name: &'a str, xml: &'a mut Reader<B>)
+        -> Result<(), XlsxError>;
 }
 
 pub(crate) trait Save<W: Write + Seek, EX: FileOptionExtension>: XmlWriter<W> {
