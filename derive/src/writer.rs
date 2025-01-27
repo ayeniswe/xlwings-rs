@@ -5,6 +5,7 @@ use syn::{
     LitByteStr, LitStr,
 };
 
+
 pub fn impl_xml_writer(input: TokenStream) -> TokenStream {
     // Gather the code definition
     let input = parse_macro_input!(input as DeriveInput);

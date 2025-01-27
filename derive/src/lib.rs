@@ -1,7 +1,7 @@
-use proc_macro::TokenStream;
-
 mod reader;
 mod writer;
+
+use proc_macro::TokenStream;
 
 /// Derive macro for generating XML serialization code.
 ///

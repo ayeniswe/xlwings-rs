@@ -54,7 +54,9 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
 
     // XML serialization code
     let mut attributes = Vec::new(); // tag attributes
+    let mut vec_attributes = Vec::new(); // tag attributes used in vec
     let mut elements = Vec::new(); // tag elements
+    let mut vec_elements = Vec::new(); // tag elements used in vec
 
     let mut following_elements = false;
     for field in fields {
@@ -120,9 +122,14 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
                     let field_name_as_bytes =
                         LitByteStr::new(field_name_str.as_bytes(), Span::call_site().into());
                     match last_segment.ident.to_string().as_str() {
-                        "bool" => Ok(quote! {
-                            #field_name_as_bytes => self.#field_name = *a.value == *b"1",
-                        }),
+                        "bool" => Ok((
+                            quote! {
+                                #field_name_as_bytes => self.#field_name = *a.value == *b"1",
+                            },
+                            quote! {
+                                #field_name_as_bytes => item.#field_name = *a.value == *b"1",
+                            },
+                        )),
                         "Vec" => {
                             // Handle Vec<u8> fields only for attributes
                             let inner_type = match &type_path.path.segments[0].arguments {
@@ -158,17 +165,31 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
                             match inner_type {
                                 Ok(_) => {
                                     let logic = if let Some(default_bytes) = default_bytes {
-                                        quote! {
-                                            if self.#field_name != #default_bytes {
-                                                attrs.push((#field_name_str.as_bytes(), self.#field_name.as_ref()));;
-                                            }
-                                        }
+                                        (
+                                            quote! {
+                                                if self.#field_name != #default_bytes {
+                                                    attrs.push((#field_name_str.as_bytes(), self.#field_name.as_ref()));;
+                                                }
+                                            },
+                                            quote! {
+                                                if item.#field_name != #default_bytes {
+                                                    attrs.push((#field_name_str.as_bytes(), item.#field_name.as_ref()));;
+                                                }
+                                            },
+                                        )
                                     } else {
-                                        quote! {
-                                            if !self.#field_name.is_empty() {
-                                                attrs.push((#field_name_str.as_bytes(), self.#field_name.as_ref()));;
-                                            }
-                                        }
+                                        (
+                                            quote! {
+                                                if !self.#field_name.is_empty() {
+                                                    attrs.push((#field_name_str.as_bytes(), self.#field_name.as_ref()));;
+                                                }
+                                            },
+                                            quote! {
+                                                if !item.#field_name.is_empty() {
+                                                    attrs.push((#field_name_str.as_bytes(), item.#field_name.as_ref()));;
+                                                }
+                                            },
+                                        )
                                     };
                                     Ok(logic)
                                 }
@@ -190,7 +211,10 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
                 )),
             };
             match attr_read_logic {
-                Ok(logic) => attributes.push(logic),
+                Ok(logic) =>  {
+                    attributes.push(logic.0);
+                    vec_attributes.push(logic.1);
+                },
                 Err(e) => panic!("Failed: {}", e),
             }
         } else {
@@ -198,23 +222,37 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
                 syn::Type::Path(type_path) => {
                     let last_segment = type_path.path.segments.last().unwrap();
                     match last_segment.ident.to_string().as_str() {
-                        "Option" => {
-                            let logic = quote! {
+                        // TODO FIX OPTION handling
+                        "Option" => Ok((
+                            quote! {
                                 if let Some(value) = &self.#field_name {
                                     value.write_xml(writer, #field_name_str)?;
                                 }
-                            };
-                            Ok(logic)
-                        }
-                        "Vec" => {
-                            Ok(quote! {
+                            },
+                            quote! {
+                                if let Some(value) = &self.#field_name {
+                                    value.write_xml(writer, #field_name_str)?;
+                                }
+                            },
+                        )),
+                        "Vec" => Ok((
+                            quote! {
                                 self.#field_name.read_xml(#field_name_str, xml, #name_str)?;
-                            })
-                        }
-                        _ => Ok(quote! {
-                            // no need to worry about closing tags
-                            self.#field_name.read_xml(#field_name_str, xml, "")?;
-                        }),
+                            },
+                            quote! {
+                                item.#field_name.read_xml(#field_name_str, xml, #name_str)?;
+                            },
+                        )),
+                        _ => Ok((
+                            quote! {
+                                // no need to worry about closing tags
+                                self.#field_name.read_xml(#field_name_str, xml, "")?;
+                            },
+                            quote! {
+                                // no need to worry about closing tags
+                                item.#field_name.read_xml(#field_name_str, xml, "")?;
+                            },
+                        )),
                     }
                 }
                 r#type => Err(Error::new(
@@ -226,11 +264,15 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
                 )),
             };
             match element_read_logic {
-                Ok(logic) => elements.push(logic),
+                Ok(logic) => {
+                    elements.push(logic.0);
+                    vec_elements.push(logic.1);
+                },
                 Err(e) => panic!("Failed: {}", e),
             }
         }
     }
+
 
     // Generate the implementation for the `XmlReader` trait for the struct
     let expanded = quote! {
@@ -249,14 +291,14 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
                             for attr in e.attributes() {
                                 if let Ok(a) = attr {
                                     match a.key.as_ref() {
-                                        #(#attributes)*
+                                        #(#vec_attributes)*
                                         _ => (),
                                     }
                                 }
                             }
                             // Read the nested tag contents
                             if let Ok(Event::Start(_)) = event {
-                                #(#elements)*
+                                #(#vec_elements)*
                             }
                             self.push(item);
                         }
