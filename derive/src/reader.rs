@@ -9,14 +9,14 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
     // Gather the code definition
     let input = parse_macro_input!(input as DeriveInput);
     let name = &input.ident;
-    let mut name_str = None;
+    let mut name_str = name.to_string();
 
     // Gather top level struct metadata
     for attr in input.attrs {
         let result = if attr.path().is_ident("xml") {
             attr.parse_nested_meta(|meta| {
                 if meta.path.is_ident("name") {
-                    name_str = Some(meta.value()?.parse::<LitStr>()?.value());
+                    name_str = meta.value()?.parse::<LitStr>()?.value();
                 } else {
                     return Err(meta.error(format!(
                         "Unsupported top-level `#[xml(...)]` option `{}`",
@@ -208,14 +208,12 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
                         }
                         "Vec" => {
                             Ok(quote! {
-                                for item in &self.#field_name {
-                                    item.read_xml(#field_name_str, xml)?;
-                                }
+                                self.#field_name.read_xml(#field_name_str, xml, #name_str)?;
                             })
-                            // TODO
                         }
                         _ => Ok(quote! {
-                            self.#field_name.read_xml(#field_name_str, xml)?;
+                            // no need to worry about closing tags
+                            self.#field_name.read_xml(#field_name_str, xml, "")?;
                         }),
                     }
                 }
@@ -236,11 +234,47 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
 
     // Generate the implementation for the `XmlReader` trait for the struct
     let expanded = quote! {
+        impl<B: BufRead> XmlReader<B> for Vec<#name> {
+            fn read_xml<'a>(&mut self, tag_name: &'a str, xml: &'a mut Reader<B>, closing_name: &'a str)
+            -> Result<(), XlsxError> {
+                // Keep memory usage to a minimum
+                let mut buf = Vec::with_capacity(1024);
+                loop {
+                    let mut item = #name::default();
+                    buf.clear();
+                    let event = xml.read_event_into(&mut buf);
+                    match event {
+                        Ok(Event::Empty(ref e)) | Ok(Event::Start(ref e)) if e.local_name().as_ref() == tag_name.as_bytes() => {
+                            // Read the tag attributes
+                            for attr in e.attributes() {
+                                if let Ok(a) = attr {
+                                    match a.key.as_ref() {
+                                        #(#attributes)*
+                                        _ => (),
+                                    }
+                                }
+                            }
+                            // Read the nested tag contents
+                            if let Ok(Event::Start(_)) = event {
+                                #(#elements)*
+                            }
+                            self.push(item);
+                        }
+                        Ok(Event::End(ref e)) if e.local_name().as_ref() == closing_name.as_bytes() => break,
+                        Ok(Event::Eof) => return Err(XlsxError::XmlEof(tag_name.into())),
+                        Err(e) => return Err(XlsxError::Xml(e)),
+                        _ => (),
+                    }
+                }
+                Ok(())
+            }
+        }
         impl<B: BufRead> XmlReader<B> for #name {
             fn read_xml<'a>(
                 &mut self,
                 tag_name: &'a str,
                 xml: &'a mut Reader<B>,
+                closing_name: &'a str,
             ) -> Result<(), XlsxError> {
                 // Keep memory usage to a minimum
                 let mut buf = Vec::with_capacity(1024);
@@ -274,6 +308,7 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
                 Ok(())
             }
         }
+
     };
     TokenStream::from(expanded)
 }

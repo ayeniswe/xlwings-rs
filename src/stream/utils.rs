@@ -47,7 +47,7 @@ pub trait XmlWriter<W: Write> {
 
 pub trait XmlReader<B: BufRead> {
     /// Allows us to read xml into a custom object
-    fn read_xml<'a>(&mut self, tag_name: &'a str, xml: &'a mut Reader<B>)
+    fn read_xml<'a>(&mut self, tag_name: &'a str, xml: &'a mut Reader<B>, closing: &'a str)
         -> Result<(), XlsxError>;
 }
 

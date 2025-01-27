@@ -64,7 +64,7 @@ mod xml_reader_derive {
     use quick_xml::{events::Event, Reader};
     use std::io::BufRead;
     use std::io::Cursor;
-    // use xcelmate::stream::utils::XmlReader;
+    use xcelmate::stream::utils::XmlReader;
     use xcelmate::stream::xlsx::errors::XlsxError;
 
     #[derive(XmlRead, Default, PartialEq, Eq, Debug)]
@@ -79,64 +79,27 @@ mod xml_reader_derive {
         // value_test: Vec<u8>,
         // #[xml(default_bytes = b"test")]
         // open_win: Vec<u8>,
+        // #[xml(element, name = "view")]
+        // sub_field: SubField,
         #[xml(element, name = "view")]
-        sub_field: SubField,
-        // #[xml(element, name = "SubField")]
-        // subfield2: Vec<SubField>,
+        subfield2: Vec<SubField>,
         // #[xml(element, name = "SubField")]
         // subfield3: Option<SubField>,
         // #[xml(element, name = "SubField")]
         // subfield4: Option<SubField>,
     }
-    #[derive(Default, PartialEq, Eq, Debug)]
+    #[derive(XmlRead, Default, PartialEq, Eq, Debug)]
     struct SubField {
-        // #[xml(name = "mainValue")]
+        #[xml(name = "mainValue")]
         value: bool,
     }
-    pub trait XmlReader<B: BufRead> {
-        /// Allows us to read xml into a custom object
-        fn read_xml<'a>(&mut self, tag_name: &'a str, xml: &'a mut Reader<B>, closing_name: &'a str)
-            -> Result<(), XlsxError>;
-    }
-    impl<B: BufRead> XmlReader<B> for Vec<SubField> {
-        fn read_xml<'a>(&mut self, tag_name: &'a str, xml: &'a mut Reader<B>, closing_name: &'a str)
-            -> Result<(), XlsxError> {
-            // Keep memory usage to a minimum
-            let mut buf = Vec::with_capacity(1024);
-            loop {
-                let mut item = SubField::default();
-                buf.clear();
-                let event = xml.read_event_into(&mut buf);
-                match event {
-                    Ok(Event::Empty(ref e)) | Ok(Event::Start(ref e)) if e.local_name().as_ref() == tag_name.as_bytes() => {
-                        // Read the tag attributes
-                        for attr in e.attributes() {
-                            if let Ok(a) = attr {
-                                match a.key.as_ref() {
-                                     b"mainValue" => item.value = *a.value == *b"1",
-                                    _ => (),
-                                }
-                            }
-                        }
-                        // Read the nested tag contents
-                        if let Ok(Event::Start(_)) = event {
-                            //
-                        }
-                        self.push(item);
-                    }
-                    Ok(Event::End(ref e)) if e.local_name().as_ref() == closing_name.as_bytes() => break,
-                    Ok(Event::Eof) => return Err(XlsxError::XmlEof(tag_name.into())),
-                    Err(e) => return Err(XlsxError::Xml(e)),
-                    _ => (),
-                }
-            }
-            Ok(())
-        }
-    }
+
     #[test]
     fn test_xml_reader_derive() {
         let xml_content = r#"
         <ex x_split="1">
+            <view mainValue="1" />
+            <view mainValue="1" />
             <view mainValue="1" />
         </ex>
         "#;
@@ -144,12 +107,16 @@ mod xml_reader_derive {
         let mut example = Example {
             ..Default::default()
         };
-        example.read_xml("ex", &mut xml).unwrap();
+        example.read_xml("ex", &mut xml, "").unwrap();
         assert_eq!(
             example,
             Example {
                 x_split: true,
-                sub_field: SubField { value: true }
+                subfield2: vec![
+                    SubField { value: true },
+                    SubField { value: true },
+                    SubField { value: true }
+                ]
             }
         );
     }
