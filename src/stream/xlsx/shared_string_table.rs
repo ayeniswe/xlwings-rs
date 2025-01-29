@@ -224,6 +224,7 @@ impl SharedStringTable {
                 Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"t" && !is_phonetic_text => {
                     val_buf.clear();
                     let mut value = String::new();
+                    let t: Result<Event<'_>, quick_xml::Error>= xml.read_event_into(&mut val_buf);
                     loop {
                         match xml.read_event_into(&mut val_buf)? {
                             Event::Text(t) => value.push_str(&t.unescape()?),

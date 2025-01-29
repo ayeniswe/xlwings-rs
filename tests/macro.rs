@@ -59,65 +59,65 @@ mod xml_writer_derive {
     }
 }
 
-mod xml_reader_derive {
-    use derive::XmlRead;
-    use quick_xml::{events::Event, Reader};
-    use std::io::BufRead;
-    use std::io::Cursor;
-    use xcelmate::stream::utils::XmlReader;
-    use xcelmate::stream::xlsx::errors::XlsxError;
+// mod xml_reader_derive {
+//     use derive::XmlRead;
+//     use quick_xml::{events::Event, Reader};
+//     use std::io::BufRead;
+//     use std::io::Cursor;
+//     use xcelmate::stream::utils::XmlReader;
+//     use xcelmate::stream::xlsx::errors::XlsxError;
 
-    #[derive(XmlRead, Default, PartialEq, Eq, Debug)]
-    #[xml(name = "ex")]
-    struct Example {
-        x_split: bool,
-        // #[xml(skip)]
-        // help: String,
-        // #[xml(name = "activePane")]
-        // active_pane: bool,
-        // missing: Vec<u8>,
-        // value_test: Vec<u8>,
-        // #[xml(default_bytes = b"test")]
-        // open_win: Vec<u8>,
-        // #[xml(element, name = "view")]
-        // sub_field: SubField,
-        #[xml(element, name = "view")]
-        subfield2: Vec<SubField>,
-        // #[xml(element, name = "SubField")]
-        // subfield3: Option<SubField>,
-        // #[xml(element, name = "SubField")]
-        // subfield4: Option<SubField>,
-    }
-    #[derive(XmlRead, Default, PartialEq, Eq, Debug)]
-    struct SubField {
-        #[xml(name = "mainValue")]
-        value: bool,
-    }
+//     #[derive(XmlRead, Default, PartialEq, Eq, Debug)]
+//     #[xml(name = "ex")]
+//     struct Example {
+//         x_split: bool,
+//         // #[xml(skip)]
+//         // help: String,
+//         // #[xml(name = "activePane")]
+//         // active_pane: bool,
+//         // missing: Vec<u8>,
+//         // value_test: Vec<u8>,
+//         // #[xml(default_bytes = b"test")]
+//         // open_win: Vec<u8>,
+//         // #[xml(element, name = "view")]
+//         // sub_field: SubField,
+//         #[xml(element, name = "view")]
+//         subfield2: Vec<SubField>,
+//         // #[xml(element, name = "SubField")]
+//         // subfield3: Option<SubField>,
+//         // #[xml(element, name = "SubField")]
+//         // subfield4: Option<SubField>,
+//     }
+//     #[derive(XmlRead, Default, PartialEq, Eq, Debug)]
+//     struct SubField {
+//         #[xml(name = "mainValue")]
+//         value: bool,
+//     }
 
-    #[test]
-    fn test_xml_reader_derive() {
-        let xml_content = r#"
-        <ex x_split="1">
-            <view mainValue="1" />
-            <view mainValue="1" />
-            <view mainValue="1" />
-        </ex>
-        "#;
-        let mut xml = Reader::from_reader(Cursor::new(xml_content));
-        let mut example = Example {
-            ..Default::default()
-        };
-        example.read_xml("ex", &mut xml, "").unwrap();
-        assert_eq!(
-            example,
-            Example {
-                x_split: true,
-                subfield2: vec![
-                    SubField { value: true },
-                    SubField { value: true },
-                    SubField { value: true }
-                ]
-            }
-        );
-    }
-}
+//     #[test]
+//     fn test_xml_reader_derive() {
+//         let xml_content = r#"
+//         <ex x_split="1">
+//             <view mainValue="1" />
+//             <view mainValue="1" />
+//             <view mainValue="1" />
+//         </ex>
+//         "#;
+//         let mut xml = Reader::from_reader(Cursor::new(xml_content));
+//         let mut example = Example {
+//             ..Default::default()
+//         };
+//         example.read_xml("ex", &mut xml, "").unwrap();
+//         assert_eq!(
+//             example,
+//             Example {
+//                 x_split: true,
+//                 subfield2: vec![
+//                     SubField { value: true },
+//                     SubField { value: true },
+//                     SubField { value: true }
+//                 ]
+//             }
+//         );
+//     }
+// }

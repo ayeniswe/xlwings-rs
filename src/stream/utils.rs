@@ -1,6 +1,6 @@
 //! The module includes extra utility tooling to help glue logic together
 use super::xlsx::errors::XlsxError;
-use quick_xml::{parser::Parser, Reader, Writer};
+use quick_xml::{events::Event, parser::Parser, Error, Reader, Writer};
 use std::io::{BufRead, BufReader, Cursor, Read, Seek, SeekFrom, Write};
 use zip::{
     read::{ZipFile, ZipFileSeek},
@@ -61,5 +61,6 @@ pub trait XmlReader<B: BufRead> {
         tag_name: &'a str,
         xml: &'a mut Reader<B>,
         closing: &'a str,
+        propagated_event: Option<Result<Event<'_>, quick_xml::Error>>,
     ) -> Result<(), XlsxError>;
 }

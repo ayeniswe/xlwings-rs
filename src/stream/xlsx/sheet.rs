@@ -5,10 +5,10 @@ use super::{
 };
 use crate::{
     errors::XcelmateError,
-    stream::utils::{xml_reader, Key, Save, XmlWriter},
+    stream::utils::{xml_reader, Key, Save, XmlReader, XmlWriter},
 };
 use bimap::{BiBTreeMap, BiHashMap, BiMap};
-use derive::XmlWrite;
+use derive::{XmlRead, XmlWrite};
 use num_enum::{FromPrimitive, IntoPrimitive};
 use quick_xml::{
     events::{BytesDecl, BytesStart, Event},
@@ -332,7 +332,7 @@ impl TryFrom<Vec<u8>> for View {
 /// - `active_pane`: The active pane (`activePane`).
 /// - `state`: The state of the pane (`state`), e.g., "split", "frozen".
 /// ```
-#[derive(Debug, Default, Clone, PartialEq, Eq, XmlWrite)]
+#[derive(Debug, XmlRead, XmlWrite, Default, Clone, PartialEq, Eq)]
 pub(crate) struct CTPane {
     #[xml(name = "xSplit", default_bytes = b"0")]
     x_split: Vec<u8>,
@@ -340,7 +340,7 @@ pub(crate) struct CTPane {
     y_split: Vec<u8>,
     #[xml(name = "topLeftCell")]
     top_left_cell: Vec<u8>,
-    #[xml(name = "activePCTane", default_bytes = b"topLeft")]
+    #[xml(name = "activePane", default_bytes = b"topLeft")]
     active_pane: Vec<u8>,
     #[xml(name = "state", default_bytes = b"split")]
     state: Vec<u8>,
@@ -381,7 +381,7 @@ impl CTPane {
 /// - `active_cell_id`: The ID of the active cell (`activeCellId`).
 /// - `sqref`: The range of selected cells (`sqref`).
 /// ```
-#[derive(Debug, Default, PartialEq, Clone, Eq, XmlWrite)]
+#[derive(Debug, Default, PartialEq, Clone, Eq, XmlRead, XmlWrite)]
 pub(crate) struct CTSelection {
     #[xml(name = "pane")]
     pane: Vec<u8>,
@@ -418,7 +418,7 @@ impl CTSelection {
 ///
 /// # Fields
 /// - `item`: The index value (`v`).
-#[derive(Debug, Default, PartialEq, Clone, Eq, XmlWrite)]
+#[derive(Debug, Default, PartialEq, Clone, Eq, XmlRead, XmlWrite)]
 pub(crate) struct CTIndex {
     #[xml(name = "v")]
     item: Vec<u8>,
@@ -485,7 +485,7 @@ impl CTIndex {
 /// - `include_variance_filter`: Indicates whether to include the variance subtotal filter (`varSubtotal`).
 /// - `include_pop_variance_filter`: Indicates whether to include the population variance subtotal filter (`varPSubtotal`).
 /// - `selected_items`: A vector of `SelectedItem` elements, each representing an index (`x`).
-#[derive(Debug, Default, PartialEq, Clone, Eq, XmlWrite)]
+#[derive(Debug, Default, PartialEq, Clone, Eq, XmlRead, XmlWrite)]
 pub(crate) struct CTPivotAreaReference {
     #[xml(name = "field")]
     field: Vec<u8>,
@@ -522,7 +522,7 @@ pub(crate) struct CTPivotAreaReference {
     #[xml(name = "varPSubtotal", default_bool = false)]
     include_pop_variance_filter: bool,
 
-    #[xml(element)]
+    #[xml(element, name = "x")]
     selected_items: Vec<CTIndex>,
 }
 impl CTPivotAreaReference {
@@ -554,11 +554,11 @@ impl CTPivotAreaReference {
 /// # Fields
 /// - `count`: The number of references in the collection (`count`).
 /// - `references`: A vector of `Reference` elements, each representing a pivot area reference (`reference`).
-#[derive(Debug, Default, PartialEq, Clone, Eq, XmlWrite)]
+#[derive(Debug, Default, PartialEq, Clone, Eq, XmlWrite, XmlRead)]
 pub(crate) struct CTPivotAreaReferences {
     #[xml(name = "count")]
     count: Vec<u8>,
-    #[xml(element)]
+    #[xml(element, name = "references")]
     references: Vec<CTPivotAreaReference>,
 }
 impl CTPivotAreaReferences {
@@ -613,7 +613,7 @@ impl CTPivotAreaReferences {
 /// - `axis`: The axis of the pivot area (`axis`).
 /// - `field_pos`: The field position (`fieldPosition`).
 /// - `reference_collection`: The collection of references (`references`).
-#[derive(Debug, Default, PartialEq, Clone, Eq, XmlWrite)]
+#[derive(Debug, Default, PartialEq, Clone, Eq, XmlWrite, XmlRead)]
 pub(crate) struct CTPivotArea {
     #[xml(name = "field")]
     field: Vec<u8>,
@@ -640,7 +640,7 @@ pub(crate) struct CTPivotArea {
     #[xml(name = "fieldPosition")]
     field_pos: Vec<u8>,
 
-    #[xml(element)]
+    #[xml(element, name ="references")]
     reference_collection: CTPivotAreaReferences,
 }
 impl CTPivotArea {
@@ -707,7 +707,7 @@ impl CTPivotArea {
 /// - `click`: The click count (`click`).
 /// - `rid`: The relationship ID (`r:id`).
 /// - `area`: The pivot area of the selection (`pivotArea`).
-#[derive(Debug, Default, PartialEq, Clone, Eq, XmlWrite)]
+#[derive(Debug, Default, PartialEq, Clone, Eq, XmlWrite, XmlRead)]
 pub(crate) struct CTPivotSelection {
     #[xml(name = "pane", default_bytes = b"topLeft")]
     pane: Vec<u8>,
@@ -744,7 +744,7 @@ pub(crate) struct CTPivotSelection {
     #[xml(name = "r:id")]
     rid: Vec<u8>,
 
-    #[xml(element)]
+    #[xml(element, name = "pivotArea")]
     area: CTPivotArea,
 }
 impl CTPivotSelection {
@@ -831,7 +831,7 @@ impl CTPivotSelection {
 /// - `selection`: Represents the selected cells or ranges (`selection`).
 /// - `pivot_selection`: Represents the pivot table selection (`pivotSelection`).
 /// ```
-#[derive(Debug, Default, PartialEq, Clone, Eq, XmlWrite)]
+#[derive(Debug, Default, PartialEq, Clone, Eq, XmlWrite, XmlRead)]
 pub(crate) struct CTSheetView {
     #[xml(name = "windowProtection", default_bool = false)]
     use_protection: bool,
@@ -872,12 +872,15 @@ pub(crate) struct CTSheetView {
     #[xml(name = "workbookViewId")]
     view_id: Vec<u8>,
 
-    #[xml(element)]
-    pane: Option<CTPane>,
-    #[xml(element)]
-    selection: Option<CTSelection>,
-    #[xml(element)]
-    pivot_selection: Option<CTPivotSelection>,
+    #[xml(element, name = "pane")]
+    pane: CTPane,
+    // pane: Option<CTPane>,
+    #[xml(element, name = "selection")]
+    selection: CTSelection,
+    // selection: Option<CTSelection>,
+    #[xml(element, name = "pivotSelection")]
+    pivot_selection: CTPivotSelection,
+    // pivot_selection: Option<CTPivotSelection>,
 }
 impl CTSheetView {
     /// Creates a new `CT_SheetView` instance with xml schema default values.
@@ -900,6 +903,84 @@ impl CTSheetView {
             ..Default::default()
         }
     }
+}
+#[test]
+fn test_ct_sheet_view() {
+    use std::io::Cursor;
+    use quick_xml::Reader;
+
+    let xml_content = r#"
+        <CTSheetView 
+            windowProtection="true"
+            showFormulas="false"
+            showGridLines="true"
+            showRowColHeaders="true"
+            showZeros="true"
+            rightToLeft="false"
+            tabSelected="true"
+            showRuler="true"
+            showOutlineSymbols="false"
+            defaultGridColor="true"
+            showWhiteSpace="true"
+            view="pageBreakPreview"
+            topLeftCell="A1"
+            colorId="42"
+            zoomScale="125"
+            zoomScaleNormal="100"
+            zoomScaleSheetLayoutView="90"
+            zoomScalePageLayoutView="85"
+            workbookViewId="1"
+        >
+            <pane xSplit="1" ySplit="2" topLeftCell="B2" activePane="topLeft" state="split"/>
+            <selection pane="topLeft" activeCell="C3" sqref="C3:D4"/>
+            <pivotSelection pane="bottomRight" dimension="A1" activeCell="E5" click="3"/>
+        </CTSheetView>
+    "#;
+
+    let mut xml = Reader::from_reader(Cursor::new(xml_content));
+    let mut example = CTSheetView::default();
+
+    example.read_xml("CTSheetView", &mut xml, "CTSheetView", None).unwrap();
+
+    // Verify boolean attributes
+    assert_eq!(example.use_protection, true);
+    assert_eq!(example.show_formula, false);
+    assert_eq!(example.show_grid, true);
+    assert_eq!(example.show_header, true);
+    assert_eq!(example.show_zero, true);
+    assert_eq!(example.use_rtl, false);
+    assert_eq!(example.show_tab, true);
+    assert_eq!(example.show_ruler, true);
+    assert_eq!(example.show_outline_symbol, false);
+    assert_eq!(example.use_default_grid_color, true);
+    assert_eq!(example.show_whitespace, true);
+
+    // Verify string and numeric attributes
+    assert_eq!(example.view, b"pageBreakPreview");
+    assert_eq!(example.top_left_cell, b"A1");
+    assert_eq!(example.color_id, b"42");
+    assert_eq!(example.zoom_scale, b"125");
+    assert_eq!(example.zoom_scale_normal, b"100");
+    assert_eq!(example.zoom_scale_sheet, b"90");
+    assert_eq!(example.zoom_scale_page, b"85");
+    assert_eq!(example.view_id, b"1");
+
+    // Verify nested pane
+    assert_eq!(example.pane.x_split, b"1");
+    assert_eq!(example.pane.y_split, b"2");
+    assert_eq!(example.pane.top_left_cell, b"B2");
+    assert_eq!(example.pane.active_pane, b"topLeft");
+    assert_eq!(example.pane.state, b"split");
+
+    // Verify nested selection
+    assert_eq!(example.selection.pane, b"topLeft");
+    assert_eq!(example.selection.cell, b"C3");
+    assert_eq!(example.selection.sqref, b"C3:D4");
+
+    // Verify nested pivotSelection
+    assert_eq!(example.pivot_selection.pane, b"bottomRight");
+    assert_eq!(example.pivot_selection.dimension, b"A1");
+    assert_eq!(example.pivot_selection.click, b"3");
 }
 
 /// Represents the page setup properties of a worksheet, defining how the worksheet is paginated.
@@ -1112,187 +1193,187 @@ pub struct Sheet {
     show_outline_symbol: bool,
 }
 
-impl<W: Write> XmlWriter<W> for Sheet {
-    fn write_xml<'a>(
-        &self,
-        writer: &'a mut Writer<W>,
-        tag_name: &'a str,
-    ) -> Result<&'a mut Writer<W>, XlsxError> {
-        writer.write_event(Event::Decl(BytesDecl::new(
-            "1.0",
-            Some("UTF-8"),
-            Some("yes"),
-        )))?;
+// impl<W: Write> XmlWriter<W> for Sheet {
+//     fn write_xml<'a>(
+//         &self,
+//         writer: &'a mut Writer<W>,
+//         tag_name: &'a str,
+//     ) -> Result<&'a mut Writer<W>, XlsxError> {
+//         writer.write_event(Event::Decl(BytesDecl::new(
+//             "1.0",
+//             Some("UTF-8"),
+//             Some("yes"),
+//         )))?;
 
-        // worksheet
-        writer
-            .create_element(tag_name)
-            .with_attributes(vec![
-                (
-                    "xmlns",
-                    "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
-                ),
-                (
-                    "xmlns:r",
-                    "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
-                ),
-                (
-                    "xmlns:mc",
-                    "http://schemas.openxmlformats.org/markup-compatibility/2006",
-                ),
-                ("mc:Ignorable", "x14ac xr xr2 xr3"),
-                (
-                    "xmlns:x14ac",
-                    "http://schemas.microsoft.com/office/spreadsheetml/2009/9/ac",
-                ),
-                (
-                    "xmlns:xr2",
-                    "http://schemas.microsoft.com/office/spreadsheetml/2015/revision2",
-                ),
-                (
-                    "xmlns:xr3",
-                    "http://schemas.microsoft.com/office/spreadsheetml/2016/revision3",
-                ),
-                (
-                    "xmlns:xr",
-                    "http://schemas.microsoft.com/office/spreadsheetml/2014/revision",
-                ),
-                ("xr:uid", &String::from_utf8(self.uid.clone())?),
-            ])
-            .write_inner_content::<_, XlsxError>(|writer| {
-                // sheetPr
-                let mut attrs = Vec::with_capacity(9);
-                if !self.code_name.is_empty() {
-                    attrs.push((b"codeName".as_ref(), self.code_name.as_ref()));
-                }
-                if !self.enable_cond_format_calc {
-                    attrs.push((b"enableFormatConditions".as_ref(), b"0".as_ref()));
-                }
-                if self.filter_mode {
-                    attrs.push((b"filterMode".as_ref(), b"1".as_ref()));
-                }
-                if !self.published {
-                    attrs.push((b"published".as_ref(), b"0".as_ref()));
-                }
-                if self.transition_entry {
-                    attrs.push((b"transitionEntry".as_ref(), b"1".as_ref()));
-                }
-                if self.transition_eval {
-                    attrs.push((b"transitionEvaluation".as_ref(), b"1".as_ref()));
-                }
-                if !self.sync_ref.is_empty() {
-                    attrs.push((b"syncRef".as_ref(), self.sync_ref.as_ref()));
-                }
-                if self.sync_vertical {
-                    attrs.push((b"syncVertical".as_ref(), b"1".as_ref()));
-                }
-                if self.sync_horizontal {
-                    attrs.push((b"syncHorizontal".as_ref(), b"1".as_ref()));
-                }
-                writer
-                    .create_element("sheetPr")
-                    .with_attributes(attrs)
-                    .write_inner_content::<_, XlsxError>(|writer| {
-                        // tabColor
-                        if let Some(color) = &self.tab_color {
-                            color.write_xml(writer, "tabColor")?;
-                        }
-                        // pageSetUpPr
-                        if self.fit_to_page || self.auto_page_break {
-                            let mut attrs = Vec::with_capacity(2);
-                            if self.fit_to_page {
-                                attrs.push((b"fitToPage".as_ref(), b"1".as_ref()));
-                            }
-                            if !self.auto_page_break {
-                                attrs.push((b"autoPageBreaks".as_ref(), b"0".as_ref()));
-                            }
-                            writer
-                                .create_element("pageSetUpPr")
-                                .with_attributes(attrs)
-                                .write_empty()?;
-                        }
-                        Ok(())
-                    })?;
-                // sheetViews
-                for view in &self.sheet_views {
-                    let mut attrs = Vec::with_capacity(9);
-                    if view.use_protection {
-                        attrs.push((b"windowProtection".as_ref(), b"1".as_ref()));
-                    }
-                    if view.show_formula {
-                        attrs.push((b"showFormulas".as_ref(), b"1".as_ref()));
-                    }
-                    if !view.show_grid {
-                        attrs.push((b"showGridLines".as_ref(), b"0".as_ref()));
-                    }
-                    if !view.show_header {
-                        attrs.push((b"showRowColHeaders".as_ref(), b"0".as_ref()));
-                    }
-                    if !view.show_zero {
-                        attrs.push((b"showZeros".as_ref(), b"0".as_ref()));
-                    }
-                    if view.use_rtl {
-                        attrs.push((b"rightToLeft".as_ref(), b"1".as_ref()));
-                    }
-                    if view.show_tab {
-                        attrs.push((b"tabSelected".as_ref(), b"1".as_ref()));
-                    }
-                    if !view.show_ruler {
-                        attrs.push((b"showRuler".as_ref(), b"0".as_ref()));
-                    }
-                    if !view.show_outline_symbol {
-                        attrs.push((b"showOutlineSymbols".as_ref(), b"0".as_ref()));
-                    }
-                    if !view.color_id.is_empty() {
-                        attrs.push((b"colorId".as_ref(), view.color_id.as_ref()));
-                    }
-                    if !view.show_whitespace {
-                        attrs.push((b"showWhiteSpace".as_ref(), b"0".as_ref()));
-                    }
-                    if view.view != b"normal" && !view.view.is_empty() {
-                        attrs.push((b"view".as_ref(), view.view.as_ref()));
-                    }
-                    if !view.top_left_cell.is_empty() {
-                        attrs.push((b"topLeftCell".as_ref(), view.top_left_cell.as_ref()));
-                    }
-                    if view.zoom_scale != <Zoom as Into<Vec<u8>>>::into(Zoom::Z100) {
-                        attrs.push((b"zoomScale".as_ref(), &view.zoom_scale));
-                    }
-                    if view.zoom_scale_normal != <Zoom as Into<Vec<u8>>>::into(Zoom::Z0) {
-                        attrs.push((b"zoomScaleNormal".as_ref(), &view.zoom_scale_normal));
-                    }
-                    if view.zoom_scale_sheet != <Zoom as Into<Vec<u8>>>::into(Zoom::Z0) {
-                        attrs.push((b"zoomScaleSheetLayoutView".as_ref(), &view.zoom_scale_sheet));
-                    }
-                    if view.zoom_scale_page != <Zoom as Into<Vec<u8>>>::into(Zoom::Z0) {
-                        attrs.push((b"zoomScalePageLayoutView".as_ref(), &view.zoom_scale_page));
-                    }
-                    attrs.push((b"workbookViewId".as_ref(), &view.view_id));
-                    writer
-                        .create_element("sheetView")
-                        .with_attributes(attrs)
-                        .write_inner_content::<_, XlsxError>(|writer| {
-                            // pane
-                            // if let Some(ref pane) = view.pane {
-                            //     pane.write_xml(writer, "pane")?;
-                            // }
-                            // // selection
-                            // if let Some(ref selection) = view.selection {
-                            //     selection.write_xml(writer, "selection")?;
-                            // }
-                            // // pivotSelection
-                            // if let Some(ref pivot_selection) = view.pivot_selection {
-                            //     pivot_selection.write_xml(writer, "pivotSelection")?;
-                            // }
+//         // worksheet
+//         writer
+//             .create_element(tag_name)
+//             .with_attributes(vec![
+//                 (
+//                     "xmlns",
+//                     "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
+//                 ),
+//                 (
+//                     "xmlns:r",
+//                     "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
+//                 ),
+//                 (
+//                     "xmlns:mc",
+//                     "http://schemas.openxmlformats.org/markup-compatibility/2006",
+//                 ),
+//                 ("mc:Ignorable", "x14ac xr xr2 xr3"),
+//                 (
+//                     "xmlns:x14ac",
+//                     "http://schemas.microsoft.com/office/spreadsheetml/2009/9/ac",
+//                 ),
+//                 (
+//                     "xmlns:xr2",
+//                     "http://schemas.microsoft.com/office/spreadsheetml/2015/revision2",
+//                 ),
+//                 (
+//                     "xmlns:xr3",
+//                     "http://schemas.microsoft.com/office/spreadsheetml/2016/revision3",
+//                 ),
+//                 (
+//                     "xmlns:xr",
+//                     "http://schemas.microsoft.com/office/spreadsheetml/2014/revision",
+//                 ),
+//                 ("xr:uid", &String::from_utf8(self.uid.clone())?),
+//             ])
+//             .write_inner_content::<_, XlsxError>(|writer| {
+//                 // sheetPr
+//                 let mut attrs = Vec::with_capacity(9);
+//                 if !self.code_name.is_empty() {
+//                     attrs.push((b"codeName".as_ref(), self.code_name.as_ref()));
+//                 }
+//                 if !self.enable_cond_format_calc {
+//                     attrs.push((b"enableFormatConditions".as_ref(), b"0".as_ref()));
+//                 }
+//                 if self.filter_mode {
+//                     attrs.push((b"filterMode".as_ref(), b"1".as_ref()));
+//                 }
+//                 if !self.published {
+//                     attrs.push((b"published".as_ref(), b"0".as_ref()));
+//                 }
+//                 if self.transition_entry {
+//                     attrs.push((b"transitionEntry".as_ref(), b"1".as_ref()));
+//                 }
+//                 if self.transition_eval {
+//                     attrs.push((b"transitionEvaluation".as_ref(), b"1".as_ref()));
+//                 }
+//                 if !self.sync_ref.is_empty() {
+//                     attrs.push((b"syncRef".as_ref(), self.sync_ref.as_ref()));
+//                 }
+//                 if self.sync_vertical {
+//                     attrs.push((b"syncVertical".as_ref(), b"1".as_ref()));
+//                 }
+//                 if self.sync_horizontal {
+//                     attrs.push((b"syncHorizontal".as_ref(), b"1".as_ref()));
+//                 }
+//                 writer
+//                     .create_element("sheetPr")
+//                     .with_attributes(attrs)
+//                     .write_inner_content::<_, XlsxError>(|writer| {
+//                         // tabColor
+//                         if let Some(color) = &self.tab_color {
+//                             color.write_xml(writer, "tabColor")?;
+//                         }
+//                         // pageSetUpPr
+//                         if self.fit_to_page || self.auto_page_break {
+//                             let mut attrs = Vec::with_capacity(2);
+//                             if self.fit_to_page {
+//                                 attrs.push((b"fitToPage".as_ref(), b"1".as_ref()));
+//                             }
+//                             if !self.auto_page_break {
+//                                 attrs.push((b"autoPageBreaks".as_ref(), b"0".as_ref()));
+//                             }
+//                             writer
+//                                 .create_element("pageSetUpPr")
+//                                 .with_attributes(attrs)
+//                                 .write_empty()?;
+//                         }
+//                         Ok(())
+//                     })?;
+//                 // sheetViews
+//                 for view in &self.sheet_views {
+//                     let mut attrs = Vec::with_capacity(9);
+//                     if view.use_protection {
+//                         attrs.push((b"windowProtection".as_ref(), b"1".as_ref()));
+//                     }
+//                     if view.show_formula {
+//                         attrs.push((b"showFormulas".as_ref(), b"1".as_ref()));
+//                     }
+//                     if !view.show_grid {
+//                         attrs.push((b"showGridLines".as_ref(), b"0".as_ref()));
+//                     }
+//                     if !view.show_header {
+//                         attrs.push((b"showRowColHeaders".as_ref(), b"0".as_ref()));
+//                     }
+//                     if !view.show_zero {
+//                         attrs.push((b"showZeros".as_ref(), b"0".as_ref()));
+//                     }
+//                     if view.use_rtl {
+//                         attrs.push((b"rightToLeft".as_ref(), b"1".as_ref()));
+//                     }
+//                     if view.show_tab {
+//                         attrs.push((b"tabSelected".as_ref(), b"1".as_ref()));
+//                     }
+//                     if !view.show_ruler {
+//                         attrs.push((b"showRuler".as_ref(), b"0".as_ref()));
+//                     }
+//                     if !view.show_outline_symbol {
+//                         attrs.push((b"showOutlineSymbols".as_ref(), b"0".as_ref()));
+//                     }
+//                     if !view.color_id.is_empty() {
+//                         attrs.push((b"colorId".as_ref(), view.color_id.as_ref()));
+//                     }
+//                     if !view.show_whitespace {
+//                         attrs.push((b"showWhiteSpace".as_ref(), b"0".as_ref()));
+//                     }
+//                     if view.view != b"normal" && !view.view.is_empty() {
+//                         attrs.push((b"view".as_ref(), view.view.as_ref()));
+//                     }
+//                     if !view.top_left_cell.is_empty() {
+//                         attrs.push((b"topLeftCell".as_ref(), view.top_left_cell.as_ref()));
+//                     }
+//                     if view.zoom_scale != <Zoom as Into<Vec<u8>>>::into(Zoom::Z100) {
+//                         attrs.push((b"zoomScale".as_ref(), &view.zoom_scale));
+//                     }
+//                     if view.zoom_scale_normal != <Zoom as Into<Vec<u8>>>::into(Zoom::Z0) {
+//                         attrs.push((b"zoomScaleNormal".as_ref(), &view.zoom_scale_normal));
+//                     }
+//                     if view.zoom_scale_sheet != <Zoom as Into<Vec<u8>>>::into(Zoom::Z0) {
+//                         attrs.push((b"zoomScaleSheetLayoutView".as_ref(), &view.zoom_scale_sheet));
+//                     }
+//                     if view.zoom_scale_page != <Zoom as Into<Vec<u8>>>::into(Zoom::Z0) {
+//                         attrs.push((b"zoomScalePageLayoutView".as_ref(), &view.zoom_scale_page));
+//                     }
+//                     attrs.push((b"workbookViewId".as_ref(), &view.view_id));
+//                     writer
+//                         .create_element("sheetView")
+//                         .with_attributes(attrs)
+//                         .write_inner_content::<_, XlsxError>(|writer| {
+//                             // pane
+//                             // if let Some(ref pane) = view.pane {
+//                             //     pane.write_xml(writer, "pane")?;
+//                             // }
+//                             // // selection
+//                             // if let Some(ref selection) = view.selection {
+//                             //     selection.write_xml(writer, "selection")?;
+//                             // }
+//                             // // pivotSelection
+//                             // if let Some(ref pivot_selection) = view.pivot_selection {
+//                             //     pivot_selection.write_xml(writer, "pivotSelection")?;
+//                             // }
 
-                            Ok(())
-                        })?;
-                }
-                Ok(())
-            })?;
-        Ok(writer)
-    }
-}
+//                             Ok(())
+//                         })?;
+//                 }
+//                 Ok(())
+//             })?;
+//         Ok(writer)
+//     }
+// }
 impl Sheet {
     fn new(path: &str) -> Self {
         Self {
@@ -1407,501 +1488,501 @@ impl Sheet {
         Ok(())
     }
 
-    /// Read all of the `sheetViews` section
-    pub fn read_sheet_views<B: BufRead>(&mut self, xml: &mut Reader<B>) -> Result<(), XlsxError> {
-        let mut buf = Vec::with_capacity(1024);
-        loop {
-            buf.clear();
-            match xml.read_event_into(&mut buf) {
-                ////////////////////
-                // SHEET VIEW
-                /////////////
-                Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"sheetViews" => {
-                    let mut view_buf = Vec::with_capacity(1024);
-                    loop {
-                        view_buf.clear();
-                        let event = xml.read_event_into(&mut view_buf);
-                        let mut sheet_view = CTSheetView::new(0);
-                        match event {
-                            Ok(Event::Empty(ref e)) | Ok(Event::Start(ref e))
-                                if e.local_name().as_ref() == b"sheetView" =>
-                            {
-                                ////////////////////
-                                // SHEET VIEW Attrs
-                                /////////////
-                                for attr in e.attributes() {
-                                    if let Ok(a) = attr {
-                                        match a.key.as_ref() {
-                                            b"showGridLines" => {
-                                                sheet_view.show_grid = *a.value == *b"1";
-                                            }
-                                            b"zoomScaleNormal" => {
-                                                sheet_view.zoom_scale_normal = a.value.into();
-                                            }
-                                            b"zoomScale" => {
-                                                sheet_view.zoom_scale = a.value.into();
-                                            }
-                                            b"zoomScalePageLayoutView" => {
-                                                sheet_view.zoom_scale_page = a.value.into();
-                                            }
-                                            b"zoomScaleSheetLayoutView" => {
-                                                sheet_view.zoom_scale_sheet = a.value.into();
-                                            }
-                                            b"workbookViewId" => {
-                                                sheet_view.view_id = a.value.into()
-                                            }
-                                            b"windowProtection" => {
-                                                sheet_view.use_protection = *a.value == *b"1";
-                                            }
-                                            b"tabSelected" => {
-                                                sheet_view.show_tab = *a.value == *b"1";
-                                            }
-                                            b"showRuler" => {
-                                                sheet_view.show_ruler = *a.value == *b"1";
-                                            }
-                                            b"showRowColHeaders" => {
-                                                sheet_view.show_header = *a.value == *b"1";
-                                            }
-                                            b"rightToLeft" => {
-                                                sheet_view.use_rtl = *a.value == *b"1";
-                                            }
-                                            b"showOutlineSymbols" => {
-                                                sheet_view.show_outline_symbol = *a.value == *b"1"
-                                            }
-                                            b"showWhiteSpace" => {
-                                                sheet_view.show_whitespace = *a.value == *b"1";
-                                            }
-                                            b"defaultGridColor" => {
-                                                sheet_view.use_default_grid_color =
-                                                    *a.value == *b"1";
-                                            }
-                                            b"view" => sheet_view.view = a.value.into(),
-                                            b"topLeftCell" => {
-                                                sheet_view.top_left_cell = a.value.into();
-                                            }
-                                            b"colorId" => {
-                                                sheet_view.color_id = a.value.into();
-                                            }
+    // /// Read all of the `sheetViews` section
+    // pub fn read_sheet_views<B: BufRead>(&mut self, xml: &mut Reader<B>) -> Result<(), XlsxError> {
+    //     let mut buf = Vec::with_capacity(1024);
+    //     loop {
+    //         buf.clear();
+    //         match xml.read_event_into(&mut buf) {
+    //             ////////////////////
+    //             // SHEET VIEW
+    //             /////////////
+    //             Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"sheetViews" => {
+    //                 let mut view_buf = Vec::with_capacity(1024);
+    //                 loop {
+    //                     view_buf.clear();
+    //                     let event = xml.read_event_into(&mut view_buf);
+    //                     let mut sheet_view = CTSheetView::new(0);
+    //                     match event {
+    //                         Ok(Event::Empty(ref e)) | Ok(Event::Start(ref e))
+    //                             if e.local_name().as_ref() == b"sheetView" =>
+    //                         {
+    //                             ////////////////////
+    //                             // SHEET VIEW Attrs
+    //                             /////////////
+    //                             for attr in e.attributes() {
+    //                                 if let Ok(a) = attr {
+    //                                     match a.key.as_ref() {
+    //                                         b"showGridLines" => {
+    //                                             sheet_view.show_grid = *a.value == *b"1";
+    //                                         }
+    //                                         b"zoomScaleNormal" => {
+    //                                             sheet_view.zoom_scale_normal = a.value.into();
+    //                                         }
+    //                                         b"zoomScale" => {
+    //                                             sheet_view.zoom_scale = a.value.into();
+    //                                         }
+    //                                         b"zoomScalePageLayoutView" => {
+    //                                             sheet_view.zoom_scale_page = a.value.into();
+    //                                         }
+    //                                         b"zoomScaleSheetLayoutView" => {
+    //                                             sheet_view.zoom_scale_sheet = a.value.into();
+    //                                         }
+    //                                         b"workbookViewId" => {
+    //                                             sheet_view.view_id = a.value.into()
+    //                                         }
+    //                                         b"windowProtection" => {
+    //                                             sheet_view.use_protection = *a.value == *b"1";
+    //                                         }
+    //                                         b"tabSelected" => {
+    //                                             sheet_view.show_tab = *a.value == *b"1";
+    //                                         }
+    //                                         b"showRuler" => {
+    //                                             sheet_view.show_ruler = *a.value == *b"1";
+    //                                         }
+    //                                         b"showRowColHeaders" => {
+    //                                             sheet_view.show_header = *a.value == *b"1";
+    //                                         }
+    //                                         b"rightToLeft" => {
+    //                                             sheet_view.use_rtl = *a.value == *b"1";
+    //                                         }
+    //                                         b"showOutlineSymbols" => {
+    //                                             sheet_view.show_outline_symbol = *a.value == *b"1"
+    //                                         }
+    //                                         b"showWhiteSpace" => {
+    //                                             sheet_view.show_whitespace = *a.value == *b"1";
+    //                                         }
+    //                                         b"defaultGridColor" => {
+    //                                             sheet_view.use_default_grid_color =
+    //                                                 *a.value == *b"1";
+    //                                         }
+    //                                         b"view" => sheet_view.view = a.value.into(),
+    //                                         b"topLeftCell" => {
+    //                                             sheet_view.top_left_cell = a.value.into();
+    //                                         }
+    //                                         b"colorId" => {
+    //                                             sheet_view.color_id = a.value.into();
+    //                                         }
 
-                                            b"showZeros" => {
-                                                sheet_view.show_zero = *a.value == *b"1"
-                                            }
-                                            b"showFormulas" => {
-                                                sheet_view.show_formula = *a.value == *b"1"
-                                            }
-                                            _ => (),
-                                        }
-                                    }
-                                }
-                                ////////////////////
-                                // SHEET VIEW Attrs nth-1
-                                /////////////
-                                if let Ok(Event::Start(_)) = event {
-                                    let mut view_value_buf = Vec::with_capacity(1024);
-                                    loop {
-                                        view_value_buf.clear();
-                                        match xml.read_event_into(&mut view_value_buf) {
-                                            ////////////////////
-                                            // Pane
-                                            /////////////
-                                            Ok(Event::Empty(ref e))
-                                                if e.local_name().as_ref() == b"pane" =>
-                                            {
-                                                let mut pane = CTPane::new();
-                                                for attr in e.attributes() {
-                                                    if let Ok(a) = attr {
-                                                        match a.key.as_ref() {
-                                                            b"activePane" => {
-                                                                pane.active_pane = a.value.into();
-                                                            }
-                                                            b"state" => {
-                                                                pane.state = a.value.into();
-                                                            }
+    //                                         b"showZeros" => {
+    //                                             sheet_view.show_zero = *a.value == *b"1"
+    //                                         }
+    //                                         b"showFormulas" => {
+    //                                             sheet_view.show_formula = *a.value == *b"1"
+    //                                         }
+    //                                         _ => (),
+    //                                     }
+    //                                 }
+    //                             }
+    //                             ////////////////////
+    //                             // SHEET VIEW Attrs nth-1
+    //                             /////////////
+    //                             if let Ok(Event::Start(_)) = event {
+    //                                 let mut view_value_buf = Vec::with_capacity(1024);
+    //                                 loop {
+    //                                     view_value_buf.clear();
+    //                                     match xml.read_event_into(&mut view_value_buf) {
+    //                                         ////////////////////
+    //                                         // Pane
+    //                                         /////////////
+    //                                         Ok(Event::Empty(ref e))
+    //                                             if e.local_name().as_ref() == b"pane" =>
+    //                                         {
+    //                                             let mut pane = CTPane::new();
+    //                                             for attr in e.attributes() {
+    //                                                 if let Ok(a) = attr {
+    //                                                     match a.key.as_ref() {
+    //                                                         b"activePane" => {
+    //                                                             pane.active_pane = a.value.into();
+    //                                                         }
+    //                                                         b"state" => {
+    //                                                             pane.state = a.value.into();
+    //                                                         }
 
-                                                            b"topLeftCell" => {
-                                                                pane.top_left_cell = a.value.into();
-                                                            }
-                                                            b"xSplit" => {
-                                                                pane.x_split = a.value.to_vec()
-                                                            }
-                                                            b"ySplit" => {
-                                                                pane.y_split = a.value.to_vec()
-                                                            }
-                                                            _ => (),
-                                                        }
-                                                    }
-                                                }
+    //                                                         b"topLeftCell" => {
+    //                                                             pane.top_left_cell = a.value.into();
+    //                                                         }
+    //                                                         b"xSplit" => {
+    //                                                             pane.x_split = a.value.to_vec()
+    //                                                         }
+    //                                                         b"ySplit" => {
+    //                                                             pane.y_split = a.value.to_vec()
+    //                                                         }
+    //                                                         _ => (),
+    //                                                     }
+    //                                                 }
+    //                                             }
 
-                                                sheet_view.pane = Some(pane)
-                                            }
-                                            ////////////////////
-                                            // Selection
-                                            /////////////
-                                            Ok(Event::Start(ref e))
-                                                if e.local_name().as_ref() == b"selection" =>
-                                            {
-                                                let mut selection = CTSelection::new();
-                                                for attr in e.attributes() {
-                                                    if let Ok(a) = attr {
-                                                        match a.key.as_ref() {
-                                                            b"pane" => {
-                                                                selection.pane = a.value.into()
-                                                            }
-                                                            b"activeCellId" => {
-                                                                selection.cell_id = a.value.into();
-                                                            }
-                                                            b"activeCell" => {
-                                                                selection.cell = a.value.into();
-                                                            }
-                                                            b"sqref" => {
-                                                                selection.sqref = a.value.into();
-                                                            }
+    //                                             sheet_view.pane = Some(pane)
+    //                                         }
+    //                                         ////////////////////
+    //                                         // Selection
+    //                                         /////////////
+    //                                         Ok(Event::Start(ref e))
+    //                                             if e.local_name().as_ref() == b"selection" =>
+    //                                         {
+    //                                             let mut selection = CTSelection::new();
+    //                                             for attr in e.attributes() {
+    //                                                 if let Ok(a) = attr {
+    //                                                     match a.key.as_ref() {
+    //                                                         b"pane" => {
+    //                                                             selection.pane = a.value.into()
+    //                                                         }
+    //                                                         b"activeCellId" => {
+    //                                                             selection.cell_id = a.value.into();
+    //                                                         }
+    //                                                         b"activeCell" => {
+    //                                                             selection.cell = a.value.into();
+    //                                                         }
+    //                                                         b"sqref" => {
+    //                                                             selection.sqref = a.value.into();
+    //                                                         }
 
-                                                            _ => (),
-                                                        }
-                                                    }
-                                                }
-                                                sheet_view.selection = Some(selection)
-                                            }
-                                            ////////////////////
-                                            // PIVOT SELECTION
-                                            /////////////
-                                            Ok(Event::Start(ref e))
-                                                if e.local_name().as_ref() == b"pivotSelection" =>
-                                            {
-                                                let mut pivot = CTPivotSelection::new();
-                                                for attr in e.attributes() {
-                                                    if let Ok(a) = attr {
-                                                        match a.key.as_ref() {
-                                                            b"pane" => {
-                                                                pivot.pane = a.value.into();
-                                                            }
-                                                            b"showHeader" => {
-                                                                pivot.show_header =
-                                                                    *a.value == *b"1";
-                                                            }
-                                                            b"label" => {
-                                                                pivot.label = *a.value == *b"1";
-                                                            }
-                                                            b"data" => {
-                                                                pivot.data = *a.value == *b"1";
-                                                            }
-                                                            b"extendable" => {
-                                                                pivot.extendable =
-                                                                    *a.value == *b"1";
-                                                            }
-                                                            b"dimension" => {
-                                                                pivot.dimension = a.value.into();
-                                                            }
-                                                            b"start" => {
-                                                                pivot.start = a.value.into();
-                                                            }
-                                                            b"min" => {
-                                                                pivot.min = a.value.into();
-                                                            }
-                                                            b"max" => {
-                                                                pivot.max = a.value.into();
-                                                            }
-                                                            b"activeRow" => {
-                                                                pivot.row = a.value.into();
-                                                            }
-                                                            b"activeCol" => {
-                                                                pivot.col = a.value.into();
-                                                            }
-                                                            b"previousRow" => {
-                                                                pivot.prev_row = a.value.into();
-                                                            }
-                                                            b"previousCol" => {
-                                                                pivot.prev_col = a.value.into();
-                                                            }
-                                                            b"click" => {
-                                                                pivot.click = a.value.into();
-                                                            }
-                                                            b"r:id" => {
-                                                                pivot.rid = a.value.into();
-                                                            }
-                                                            b"axis" => pivot.axis = a.value.into(),
+    //                                                         _ => (),
+    //                                                     }
+    //                                                 }
+    //                                             }
+    //                                             sheet_view.selection = Some(selection)
+    //                                         }
+    //                                         ////////////////////
+    //                                         // PIVOT SELECTION
+    //                                         /////////////
+    //                                         Ok(Event::Start(ref e))
+    //                                             if e.local_name().as_ref() == b"pivotSelection" =>
+    //                                         {
+    //                                             let mut pivot = CTPivotSelection::new();
+    //                                             for attr in e.attributes() {
+    //                                                 if let Ok(a) = attr {
+    //                                                     match a.key.as_ref() {
+    //                                                         b"pane" => {
+    //                                                             pivot.pane = a.value.into();
+    //                                                         }
+    //                                                         b"showHeader" => {
+    //                                                             pivot.show_header =
+    //                                                                 *a.value == *b"1";
+    //                                                         }
+    //                                                         b"label" => {
+    //                                                             pivot.label = *a.value == *b"1";
+    //                                                         }
+    //                                                         b"data" => {
+    //                                                             pivot.data = *a.value == *b"1";
+    //                                                         }
+    //                                                         b"extendable" => {
+    //                                                             pivot.extendable =
+    //                                                                 *a.value == *b"1";
+    //                                                         }
+    //                                                         b"dimension" => {
+    //                                                             pivot.dimension = a.value.into();
+    //                                                         }
+    //                                                         b"start" => {
+    //                                                             pivot.start = a.value.into();
+    //                                                         }
+    //                                                         b"min" => {
+    //                                                             pivot.min = a.value.into();
+    //                                                         }
+    //                                                         b"max" => {
+    //                                                             pivot.max = a.value.into();
+    //                                                         }
+    //                                                         b"activeRow" => {
+    //                                                             pivot.row = a.value.into();
+    //                                                         }
+    //                                                         b"activeCol" => {
+    //                                                             pivot.col = a.value.into();
+    //                                                         }
+    //                                                         b"previousRow" => {
+    //                                                             pivot.prev_row = a.value.into();
+    //                                                         }
+    //                                                         b"previousCol" => {
+    //                                                             pivot.prev_col = a.value.into();
+    //                                                         }
+    //                                                         b"click" => {
+    //                                                             pivot.click = a.value.into();
+    //                                                         }
+    //                                                         b"r:id" => {
+    //                                                             pivot.rid = a.value.into();
+    //                                                         }
+    //                                                         b"axis" => pivot.axis = a.value.into(),
 
-                                                            _ => (),
-                                                        }
-                                                    }
-                                                }
+    //                                                         _ => (),
+    //                                                     }
+    //                                                 }
+    //                                             }
 
-                                                /////////////////////
-                                                //// PIVOT AREA
-                                                ///////////////
-                                                let mut area_buf = Vec::with_capacity(1024);
-                                                loop {
-                                                    let mut area = CTPivotArea::new();
-                                                    area_buf.clear();
-                                                    match xml.read_event_into(&mut area_buf) {
-                                                        Ok(Event::Start(ref e))
-                                                            if e.local_name().as_ref()
-                                                                == b"pivotArea" =>
-                                                        {
-                                                            for attr in e.attributes() {
-                                                                if let Ok(a) = attr {
-                                                                    match a.key.as_ref() {
-                                                                        b"field" =>
-                                                                            area.field =a.value.to_vec(),
-
-
-                                                                        b"type" => {
-                                                                            area.pivot_type = a.value.into();
-                                                                        }
-                                                                        b"dataOnly" => {
-                                                                            area.use_data_only =
-                                                                                *a.value == *b"1"
-                                                                        }
-                                                                        b"labelOnly" => {
-                                                                            area.use_label_only =
-                                                                                *a.value == *b"1"
-                                                                        }
-                                                                        b"grandRow" => {
-                                                                            area.include_row_total =
-                                                                                *a.value == *b"1"
-                                                                        }
-                                                                        b"grandCol" => {
-                                                                            area.include_col_total =
-                                                                                *a.value == *b"1"
-                                                                        }
-                                                                        b"cacheIndex" => {
-                                                                            area.cache_index =
-                                                                                *a.value == *b"1"
-                                                                        }
-                                                                        b"outline" => {
-                                                                            area.outline =
-                                                                                *a.value == *b"1"
-                                                                        }
-                                                                        b"offset" => {
-                                                                            area.offset = a.value.into();
-                                                                        }
-                                                                        // This binary string breaks rustfmt with line length
-                                                                        b"collapsedLevelsAreSubtotals" => {
-                                                                            area.collapsed_are_subtotal = *a.value == *b"1";
-                                                                        }
-                                                                        b"axis" => {
-                                                                            area.axis = a.value.into();
-                                                                        }
-                                                                        b"fieldPosition" =>
-                                                                            area.field_pos =
-                                                                                a.value.to_vec(),
+    //                                             /////////////////////
+    //                                             //// PIVOT AREA
+    //                                             ///////////////
+    //                                             let mut area_buf = Vec::with_capacity(1024);
+    //                                             loop {
+    //                                                 let mut area = CTPivotArea::new();
+    //                                                 area_buf.clear();
+    //                                                 match xml.read_event_into(&mut area_buf) {
+    //                                                     Ok(Event::Start(ref e))
+    //                                                         if e.local_name().as_ref()
+    //                                                             == b"pivotArea" =>
+    //                                                     {
+    //                                                         for attr in e.attributes() {
+    //                                                             if let Ok(a) = attr {
+    //                                                                 match a.key.as_ref() {
+    //                                                                     b"field" =>
+    //                                                                         area.field =a.value.to_vec(),
 
 
-                                                                        _ => (),
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
+    //                                                                     b"type" => {
+    //                                                                         area.pivot_type = a.value.into();
+    //                                                                     }
+    //                                                                     b"dataOnly" => {
+    //                                                                         area.use_data_only =
+    //                                                                             *a.value == *b"1"
+    //                                                                     }
+    //                                                                     b"labelOnly" => {
+    //                                                                         area.use_label_only =
+    //                                                                             *a.value == *b"1"
+    //                                                                     }
+    //                                                                     b"grandRow" => {
+    //                                                                         area.include_row_total =
+    //                                                                             *a.value == *b"1"
+    //                                                                     }
+    //                                                                     b"grandCol" => {
+    //                                                                         area.include_col_total =
+    //                                                                             *a.value == *b"1"
+    //                                                                     }
+    //                                                                     b"cacheIndex" => {
+    //                                                                         area.cache_index =
+    //                                                                             *a.value == *b"1"
+    //                                                                     }
+    //                                                                     b"outline" => {
+    //                                                                         area.outline =
+    //                                                                             *a.value == *b"1"
+    //                                                                     }
+    //                                                                     b"offset" => {
+    //                                                                         area.offset = a.value.into();
+    //                                                                     }
+    //                                                                     // This binary string breaks rustfmt with line length
+    //                                                                     b"collapsedLevelsAreSubtotals" => {
+    //                                                                         area.collapsed_are_subtotal = *a.value == *b"1";
+    //                                                                     }
+    //                                                                     b"axis" => {
+    //                                                                         area.axis = a.value.into();
+    //                                                                     }
+    //                                                                     b"fieldPosition" =>
+    //                                                                         area.field_pos =
+    //                                                                             a.value.to_vec(),
 
-                                                        //////////////////
-                                                        //// REFERENCE
-                                                        //////////////
-                                                        Ok(Event::Start(ref e))
-                                                            if e.local_name().as_ref()
-                                                                == b"reference" =>
-                                                        {
-                                                            pivot.area.reference_collection =
-                                                                CTPivotAreaReferences::new();
-                                                            let mut reference =
-                                                                CTPivotAreaReference::new();
-                                                            for attr in e.attributes() {
-                                                                if let Ok(a) = attr {
-                                                                    match a.key.as_ref() {
-                                                                        b"field" => {
-                                                                            reference.field =
-                                                                                a.value.into();
-                                                                        }
-                                                                        b"selected" => {
-                                                                            reference.selected =
-                                                                                *a.value == *b"1";
-                                                                        }
-                                                                        b"byPosition" => {
-                                                                            reference.selected =
-                                                                                *a.value == *b"1";
-                                                                        }
-                                                                        b"relative" => {
-                                                                            reference.relative =
-                                                                                *a.value == *b"1";
-                                                                        }
-                                                                        b"defaultSubtotal" => {
-                                                                            reference.include_default_filter =
-                                                                                *a.value == *b"1";
-                                                                        }
-                                                                        b"sumSubtotal" => {
-                                                                            reference.include_sum_aggregate_filter =
-                                                                                *a.value == *b"1";
-                                                                        }
-                                                                        b"countASubtotal" => {
-                                                                            reference.include_counta_filter =
-                                                                                *a.value == *b"1";
-                                                                        }
-                                                                        b"avgSubtotal" => {
-                                                                            reference.include_avg_aggregate_filter =
-                                                                                *a.value == *b"1";
-                                                                        }
-                                                                        b"maxSubtotal" => {
-                                                                            reference.include_max_aggregate_filter =
-                                                                                *a.value == *b"1";
-                                                                        }
-                                                                        b"minSubtotal" => {
-                                                                            reference.include_min_aggregate_filter =
-                                                                                *a.value == *b"1";
-                                                                        }
-                                                                        b"productSubtotal" => {
-                                                                            reference.include_prod_aggregate_filter =
-                                                                                *a.value == *b"1";
-                                                                        }
-                                                                        b"countSubtotal" => {
-                                                                            reference.include_count_filter =
-                                                                                *a.value == *b"1";
-                                                                        }
-                                                                        b"stdDevSubtotal" => {
-                                                                            reference.include_std_deviation_filter =
-                                                                                *a.value == *b"1";
-                                                                        }
-                                                                        b"stdDevPSubtotal" => {
-                                                                            reference.include_pop_std_deviation_filter =
-                                                                                *a.value == *b"1";
-                                                                        }
-                                                                        b"varSubtotal" => {
-                                                                            reference.include_variance_filter =
-                                                                                *a.value == *b"1";
-                                                                        }
-                                                                        b"varPSubtotal" => {
-                                                                            reference.include_pop_variance_filter =
-                                                                                *a.value == *b"1";
-                                                                        }
-                                                                        _ => (),
-                                                                    }
-                                                                }
-                                                            }
-                                                            let mut ref_buf =
-                                                                Vec::with_capacity(1024);
-                                                            //////////////////
-                                                            //// REFERENCE nth-1
-                                                            //////////////
-                                                            loop {
-                                                                ref_buf.clear();
-                                                                match xml
-                                                                    .read_event_into(&mut ref_buf)
-                                                                {
-                                                                    //////////////////
-                                                                    //// REFERENCE SHARED VALUE
-                                                                    //////////////
-                                                                    Ok(Event::Empty(ref e))
-                                                                        if e.local_name()
-                                                                            .as_ref()
-                                                                            == b"x" =>
-                                                                    {
-                                                                        //////////////////
-                                                                        //// SHARED VALUE
-                                                                        //////////////
-                                                                        for attr in e.attributes() {
-                                                                            if let Ok(a) = attr {
-                                                                                match a.key.as_ref() {
-                                                                                            b"v" => {
-                                                                                                reference.selected_items.push(
-                                                                                                    CTIndex { item: a.value.into() }
-                                                                                                )
-                                                                                            },
-                                                                                            _ => ()
-                                                                                        }
-                                                                            }
-                                                                        }
-                                                                    }
-                                                                    Ok(Event::End(ref e))
-                                                                        if e.local_name()
-                                                                            .as_ref()
-                                                                            == b"reference" =>
-                                                                    {
-                                                                        pivot
-                                                                            .area
-                                                                            .reference_collection
-                                                                            .references
-                                                                            .push(reference);
-                                                                        break;
-                                                                    }
-                                                                    Ok(Event::Eof) => {
-                                                                        return Err(
-                                                                            XlsxError::XmlEof(
-                                                                                "reference".into(),
-                                                                            ),
-                                                                        )
-                                                                    }
-                                                                    Err(e) => {
-                                                                        return Err(
-                                                                            XlsxError::Xml(e),
-                                                                        );
-                                                                    }
-                                                                    _ => (),
-                                                                }
-                                                            }
-                                                        }
-                                                        Ok(Event::End(ref e))
-                                                            if e.local_name().as_ref()
-                                                                == b"pivotArea" =>
-                                                        {
-                                                            let count = pivot
-                                                                .area
-                                                                .reference_collection
-                                                                .references
-                                                                .len();
-                                                            pivot.area.reference_collection.count =
-                                                                count.to_string().as_bytes().into();
-                                                            pivot.area = area;
-                                                            break;
-                                                        }
-                                                        Ok(Event::Eof) => {
-                                                            return Err(XlsxError::XmlEof(
-                                                                "pivotArea".into(),
-                                                            ))
-                                                        }
-                                                        Err(e) => {
-                                                            return Err(XlsxError::Xml(e));
-                                                        }
-                                                        _ => (),
-                                                    }
-                                                }
-                                            }
-                                            Ok(Event::End(ref e))
-                                                if e.local_name().as_ref() == b"sheetView" =>
-                                            {
-                                                break
-                                            }
-                                            Ok(Event::Eof) => {
-                                                return Err(XlsxError::XmlEof("sheetView".into()))
-                                            }
-                                            Err(e) => {
-                                                return Err(XlsxError::Xml(e));
-                                            }
-                                            _ => (),
-                                        }
-                                    }
-                                }
-                                self.sheet_views.push(sheet_view);
-                            }
-                            Ok(Event::End(ref e)) if e.local_name().as_ref() == b"sheetViews" => {
-                                break
-                            }
-                            Ok(Event::Eof) => return Err(XlsxError::XmlEof("sheetViews".into())),
-                            Err(e) => {
-                                return Err(XlsxError::Xml(e));
-                            }
-                            _ => (),
-                        }
-                    }
-                }
-                Ok(Event::End(ref e)) if e.local_name().as_ref() == b"worksheet" => break,
-                Ok(Event::Eof) => return Err(XlsxError::XmlEof("worksheet".into())),
-                Err(e) => {
-                    return Err(XlsxError::Xml(e));
-                }
-                _ => (),
-            }
-        }
-        Ok(())
-    }
+
+    //                                                                     _ => (),
+    //                                                                 }
+    //                                                             }
+    //                                                         }
+    //                                                     }
+
+    //                                                     //////////////////
+    //                                                     //// REFERENCE
+    //                                                     //////////////
+    //                                                     Ok(Event::Start(ref e))
+    //                                                         if e.local_name().as_ref()
+    //                                                             == b"reference" =>
+    //                                                     {
+    //                                                         pivot.area.reference_collection =
+    //                                                             CTPivotAreaReferences::new();
+    //                                                         let mut reference =
+    //                                                             CTPivotAreaReference::new();
+    //                                                         for attr in e.attributes() {
+    //                                                             if let Ok(a) = attr {
+    //                                                                 match a.key.as_ref() {
+    //                                                                     b"field" => {
+    //                                                                         reference.field =
+    //                                                                             a.value.into();
+    //                                                                     }
+    //                                                                     b"selected" => {
+    //                                                                         reference.selected =
+    //                                                                             *a.value == *b"1";
+    //                                                                     }
+    //                                                                     b"byPosition" => {
+    //                                                                         reference.selected =
+    //                                                                             *a.value == *b"1";
+    //                                                                     }
+    //                                                                     b"relative" => {
+    //                                                                         reference.relative =
+    //                                                                             *a.value == *b"1";
+    //                                                                     }
+    //                                                                     b"defaultSubtotal" => {
+    //                                                                         reference.include_default_filter =
+    //                                                                             *a.value == *b"1";
+    //                                                                     }
+    //                                                                     b"sumSubtotal" => {
+    //                                                                         reference.include_sum_aggregate_filter =
+    //                                                                             *a.value == *b"1";
+    //                                                                     }
+    //                                                                     b"countASubtotal" => {
+    //                                                                         reference.include_counta_filter =
+    //                                                                             *a.value == *b"1";
+    //                                                                     }
+    //                                                                     b"avgSubtotal" => {
+    //                                                                         reference.include_avg_aggregate_filter =
+    //                                                                             *a.value == *b"1";
+    //                                                                     }
+    //                                                                     b"maxSubtotal" => {
+    //                                                                         reference.include_max_aggregate_filter =
+    //                                                                             *a.value == *b"1";
+    //                                                                     }
+    //                                                                     b"minSubtotal" => {
+    //                                                                         reference.include_min_aggregate_filter =
+    //                                                                             *a.value == *b"1";
+    //                                                                     }
+    //                                                                     b"productSubtotal" => {
+    //                                                                         reference.include_prod_aggregate_filter =
+    //                                                                             *a.value == *b"1";
+    //                                                                     }
+    //                                                                     b"countSubtotal" => {
+    //                                                                         reference.include_count_filter =
+    //                                                                             *a.value == *b"1";
+    //                                                                     }
+    //                                                                     b"stdDevSubtotal" => {
+    //                                                                         reference.include_std_deviation_filter =
+    //                                                                             *a.value == *b"1";
+    //                                                                     }
+    //                                                                     b"stdDevPSubtotal" => {
+    //                                                                         reference.include_pop_std_deviation_filter =
+    //                                                                             *a.value == *b"1";
+    //                                                                     }
+    //                                                                     b"varSubtotal" => {
+    //                                                                         reference.include_variance_filter =
+    //                                                                             *a.value == *b"1";
+    //                                                                     }
+    //                                                                     b"varPSubtotal" => {
+    //                                                                         reference.include_pop_variance_filter =
+    //                                                                             *a.value == *b"1";
+    //                                                                     }
+    //                                                                     _ => (),
+    //                                                                 }
+    //                                                             }
+    //                                                         }
+    //                                                         let mut ref_buf =
+    //                                                             Vec::with_capacity(1024);
+    //                                                         //////////////////
+    //                                                         //// REFERENCE nth-1
+    //                                                         //////////////
+    //                                                         loop {
+    //                                                             ref_buf.clear();
+    //                                                             match xml
+    //                                                                 .read_event_into(&mut ref_buf)
+    //                                                             {
+    //                                                                 //////////////////
+    //                                                                 //// REFERENCE SHARED VALUE
+    //                                                                 //////////////
+    //                                                                 Ok(Event::Empty(ref e))
+    //                                                                     if e.local_name()
+    //                                                                         .as_ref()
+    //                                                                         == b"x" =>
+    //                                                                 {
+    //                                                                     //////////////////
+    //                                                                     //// SHARED VALUE
+    //                                                                     //////////////
+    //                                                                     for attr in e.attributes() {
+    //                                                                         if let Ok(a) = attr {
+    //                                                                             match a.key.as_ref() {
+    //                                                                                         b"v" => {
+    //                                                                                             reference.selected_items.push(
+    //                                                                                                 CTIndex { item: a.value.into() }
+    //                                                                                             )
+    //                                                                                         },
+    //                                                                                         _ => ()
+    //                                                                                     }
+    //                                                                         }
+    //                                                                     }
+    //                                                                 }
+    //                                                                 Ok(Event::End(ref e))
+    //                                                                     if e.local_name()
+    //                                                                         .as_ref()
+    //                                                                         == b"reference" =>
+    //                                                                 {
+    //                                                                     pivot
+    //                                                                         .area
+    //                                                                         .reference_collection
+    //                                                                         .references
+    //                                                                         .push(reference);
+    //                                                                     break;
+    //                                                                 }
+    //                                                                 Ok(Event::Eof) => {
+    //                                                                     return Err(
+    //                                                                         XlsxError::XmlEof(
+    //                                                                             "reference".into(),
+    //                                                                         ),
+    //                                                                     )
+    //                                                                 }
+    //                                                                 Err(e) => {
+    //                                                                     return Err(
+    //                                                                         XlsxError::Xml(e),
+    //                                                                     );
+    //                                                                 }
+    //                                                                 _ => (),
+    //                                                             }
+    //                                                         }
+    //                                                     }
+    //                                                     Ok(Event::End(ref e))
+    //                                                         if e.local_name().as_ref()
+    //                                                             == b"pivotArea" =>
+    //                                                     {
+    //                                                         let count = pivot
+    //                                                             .area
+    //                                                             .reference_collection
+    //                                                             .references
+    //                                                             .len();
+    //                                                         pivot.area.reference_collection.count =
+    //                                                             count.to_string().as_bytes().into();
+    //                                                         pivot.area = area;
+    //                                                         break;
+    //                                                     }
+    //                                                     Ok(Event::Eof) => {
+    //                                                         return Err(XlsxError::XmlEof(
+    //                                                             "pivotArea".into(),
+    //                                                         ))
+    //                                                     }
+    //                                                     Err(e) => {
+    //                                                         return Err(XlsxError::Xml(e));
+    //                                                     }
+    //                                                     _ => (),
+    //                                                 }
+    //                                             }
+    //                                         }
+    //                                         Ok(Event::End(ref e))
+    //                                             if e.local_name().as_ref() == b"sheetView" =>
+    //                                         {
+    //                                             break
+    //                                         }
+    //                                         Ok(Event::Eof) => {
+    //                                             return Err(XlsxError::XmlEof("sheetView".into()))
+    //                                         }
+    //                                         Err(e) => {
+    //                                             return Err(XlsxError::Xml(e));
+    //                                         }
+    //                                         _ => (),
+    //                                     }
+    //                                 }
+    //                             }
+    //                             self.sheet_views.push(sheet_view);
+    //                         }
+    //                         Ok(Event::End(ref e)) if e.local_name().as_ref() == b"sheetViews" => {
+    //                             break
+    //                         }
+    //                         Ok(Event::Eof) => return Err(XlsxError::XmlEof("sheetViews".into())),
+    //                         Err(e) => {
+    //                             return Err(XlsxError::Xml(e));
+    //                         }
+    //                         _ => (),
+    //                     }
+    //                 }
+    //             }
+    //             Ok(Event::End(ref e)) if e.local_name().as_ref() == b"worksheet" => break,
+    //             Ok(Event::Eof) => return Err(XlsxError::XmlEof("worksheet".into())),
+    //             Err(e) => {
+    //                 return Err(XlsxError::Xml(e));
+    //             }
+    //             _ => (),
+    //         }
+    //     }
+    //     Ok(())
+    // }
 
     pub fn read_sheet<'a, RS: Read + Seek>(
         &mut self,
