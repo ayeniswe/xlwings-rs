@@ -873,14 +873,11 @@ pub(crate) struct CTSheetView {
     view_id: Vec<u8>,
 
     #[xml(element, name = "pane")]
-    pane: CTPane,
-    // pane: Option<CTPane>,
+    pane: Option<CTPane>,
     #[xml(element, name = "selection")]
-    selection: CTSelection,
-    // selection: Option<CTSelection>,
+    selection: Option<CTSelection>,
     #[xml(element, name = "pivotSelection")]
-    pivot_selection: CTPivotSelection,
-    // pivot_selection: Option<CTPivotSelection>,
+    pivot_selection: Option<CTPivotSelection>,
 }
 impl CTSheetView {
     /// Creates a new `CT_SheetView` instance with xml schema default values.
@@ -941,7 +938,7 @@ fn test_ct_sheet_view() {
     let mut example = CTSheetView::default();
 
     example.read_xml("CTSheetView", &mut xml, "CTSheetView", None).unwrap();
-
+    
     // Verify boolean attributes
     assert_eq!(example.use_protection, true);
     assert_eq!(example.show_formula, false);
@@ -966,21 +963,24 @@ fn test_ct_sheet_view() {
     assert_eq!(example.view_id, b"1");
 
     // Verify nested pane
-    assert_eq!(example.pane.x_split, b"1");
-    assert_eq!(example.pane.y_split, b"2");
-    assert_eq!(example.pane.top_left_cell, b"B2");
-    assert_eq!(example.pane.active_pane, b"topLeft");
-    assert_eq!(example.pane.state, b"split");
-
+    let pane = example.pane.unwrap();
+    assert_eq!(pane.x_split, b"1");
+    assert_eq!(pane.y_split, b"2");
+    assert_eq!(pane.top_left_cell, b"B2");
+    assert_eq!(pane.active_pane, b"topLeft");
+    assert_eq!(pane.state, b"split");
+    
     // Verify nested selection
-    assert_eq!(example.selection.pane, b"topLeft");
-    assert_eq!(example.selection.cell, b"C3");
-    assert_eq!(example.selection.sqref, b"C3:D4");
+    let selection = example.selection.unwrap();
+    assert_eq!(selection.pane, b"topLeft");
+    assert_eq!(selection.cell, b"C3");
+    assert_eq!(selection.sqref, b"C3:D4");
 
     // Verify nested pivotSelection
-    assert_eq!(example.pivot_selection.pane, b"bottomRight");
-    assert_eq!(example.pivot_selection.dimension, b"A1");
-    assert_eq!(example.pivot_selection.click, b"3");
+    let pivot_selection = example.pivot_selection.unwrap();
+    assert_eq!(pivot_selection.pane, b"bottomRight");
+    assert_eq!(pivot_selection.dimension, b"A1");
+    assert_eq!(pivot_selection.click, b"3");
 }
 
 /// Represents the page setup properties of a worksheet, defining how the worksheet is paginated.
