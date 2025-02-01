@@ -1,1 +1,2 @@
-pub(crate) pane;
+pub pane;
+pub selection;
