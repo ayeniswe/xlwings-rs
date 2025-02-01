@@ -25,7 +25,7 @@ use std::io::BufRead;
 /// # Fields
 /// - `range`: The cell range of the worksheet's dimensions (`ref`).
 #[derive(Debug, PartialEq, Default, Clone, Eq, XmlWrite)]
-pub struct CTSheetDimension {
+pub(crate) struct CTSheetDimension {
     #[xml(name = "ref")]
     range: Vec<u8>,
 }
@@ -58,7 +58,7 @@ impl CTSheetDimension {
 /// - `summary_right`: Indicates whether summary columns are displayed to the right of the detail columns (`summaryRight`).
 /// - `show_outline_symbols`: Indicates whether outline symbols are displayed (`showOutlineSymbols`).
 #[derive(Debug, Default, PartialEq, Clone, Eq, XmlWrite)]
-pub struct CTOutlinePr {
+pub(crate) struct CTOutlinePr {
     #[xml(name = "applyStyles", default_bool = false)]
     apply_styles: bool,
     #[xml(name = "summaryBelow", default_bool = true)]
@@ -97,7 +97,7 @@ impl CTOutlinePr {
 /// - `auto_page_breaks`: Indicates whether automatic page breaks are enabled (`autoPageBreaks`).
 /// - `fit_to_page`: Indicates whether the content should be fit to the page (`fitToPage`).
 #[derive(Debug, Default, PartialEq, Clone, Eq, XmlWrite)]
-pub struct CTPageSetupPr {
+pub(crate) struct CTPageSetupPr {
     #[xml(name = "autoPageBreaks", default_bool = true)]
     auto_page_breaks: bool,
     #[xml(name = "fitToPage", default_bool = false)]
@@ -152,7 +152,7 @@ impl CTPageSetupPr {
 /// - `outline_pr`: The outline properties of the sheet (`outlinePr`).
 /// - `page_setup_pr`: The page setup properties of the sheet (`pageSetUpPr`).
 #[derive(Debug, Default, PartialEq, Clone, Eq, XmlWrite)]
-pub struct CTSheetPr {
+pub(crate) struct CTSheetPr {
     #[xml(name = "syncHorizontal", default_bool = false)]
     sync_horizontal: bool,
     #[xml(name = "syncVertical", default_bool = false)]
