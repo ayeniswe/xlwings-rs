@@ -1,3 +1,64 @@
+use crate::{
+    errors::XlsxError,
+    stream::utils::{XmlReader, XmlWriter},
+};
+use derive::{XmlRead, XmlWrite};
+use quick_xml::{
+    events::{Event},
+    Reader, Writer,
+};
+use std::io::BufRead;
+
+// Location of pane within sheet
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub(crate) enum PanePosition {
+    BottomRight,
+    TopRight,
+    BottomLeft,
+    #[default]
+    TopLeft,
+}
+impl TryFrom<Vec<u8>> for PanePosition {
+    type Error = XlsxError;
+
+    fn try_from(value: Vec<u8>) -> Result<Self, Self::Error> {
+        match value.as_slice() {
+            b"bottomLeft" => Ok(PanePosition::BottomLeft),
+            b"bottomRight" => Ok(PanePosition::BottomRight),
+            b"topLeft" => Ok(PanePosition::TopLeft),
+            b"topRight" => Ok(PanePosition::TopRight),
+            v => {
+                let value = String::from_utf8_lossy(v);
+                Err(XlsxError::MissingVariant(
+                    "PanePosition".into(),
+                    value.into(),
+                ))
+            }
+        }
+    }
+}
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub(crate) enum PaneState {
+    Frozen,
+    #[default]
+    Split,
+    FrozenSplit,
+}
+impl TryFrom<Vec<u8>> for PaneState {
+    type Error = XlsxError;
+
+    fn try_from(value: Vec<u8>) -> Result<Self, Self::Error> {
+        match value.as_slice() {
+            b"frozen" => Ok(PaneState::Frozen),
+            b"split" => Ok(PaneState::Split),
+            b"frozenSplit" => Ok(PaneState::FrozenSplit),
+            v => {
+                let value = String::from_utf8_lossy(v);
+                Err(XlsxError::MissingVariant("PaneState".into(), value.into()))
+            }
+        }
+    }
+}
 /// Represents a pane in a spreadsheet, defining the split and active pane settings.
 ///
 /// This struct corresponds to the `CT_Pane` complex type in the XML schema. It encapsulates
