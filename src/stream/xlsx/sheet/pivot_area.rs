@@ -229,3 +229,114 @@ impl CTPivotArea {
         }
     }
 }
+/// Represents a selection within a `PivotTable`, defining the active row, column, and other settings.
+///
+/// This struct corresponds to the `CT_PivotSelection` complex type in the XML schema. It encapsulates
+/// attributes that specify the active row, column, pane, and other properties related to the selection
+/// within a PivotTable.
+///
+/// # XML Schema Mapping
+/// The struct maps to the following XML schema definition:
+/// ```xml
+/// <complexType name="CT_PivotSelection">
+///     <sequence>
+///         <element name="pivotArea" type="CT_PivotArea"/>
+///     </sequence>
+///     <attribute name="pane" type="ST_Pane" use="optional" default="topLeft"/>
+///     <attribute name="showHeader" type="xsd:boolean" default="false"/>
+///     <attribute name="label" type="xsd:boolean" default="false"/>
+///     <attribute name="data" type="xsd:boolean" default="false"/>
+///     <attribute name="extendable" type="xsd:boolean" default="false"/>
+///     <attribute name="count" type="xsd:unsignedInt" default="0"/>
+///     <attribute name="axis" type="ST_Axis" use="optional"/>
+///     <attribute name="dimension" type="xsd:unsignedInt" default="0"/>
+///     <attribute name="start" type="xsd:unsignedInt" default="0"/>
+///     <attribute name="min" type="xsd:unsignedInt" default="0"/>
+///     <attribute name="max" type="xsd:unsignedInt" default="0"/>
+///     <attribute name="activeRow" type="xsd:unsignedInt" default="0"/>
+///     <attribute name="activeCol" type="xsd:unsignedInt" default="0"/>
+///     <attribute name="previousRow" type="xsd:unsignedInt" default="0"/>
+///     <attribute name="previousCol" type="xsd:unsignedInt" default="0"/>
+///     <attribute name="click" type="xsd:unsignedInt" default="0"/>
+///     <attribute ref="r:id" use="optional"/>
+/// </complexType>
+/// ```
+///
+/// # Fields
+/// - `pane`: The pane in which the selection is active (`pane`).
+/// - `show_header`: Indicates whether to show the header (`showHeader`).
+/// - `label`: Indicates whether the selection is a label (`label`).
+/// - `data`: Indicates whether the selection is data (`data`).
+/// - `extendable`: Indicates whether the selection is extendable (`extendable`).
+/// - `count`: The count of selected items (`count`).
+/// - `axis`: The axis of the selection (`axis`).
+/// - `dimension`: The dimension of the selection (`dimension`).
+/// - `start`: The starting index of the selection (`start`).
+/// - `min`: The minimum value of the selection (`min`).
+/// - `max`: The maximum value of the selection (`max`).
+/// - `row`: The active row in the selection (`activeRow`).
+/// - `col`: The active column in the selection (`activeCol`).
+/// - `prev_row`: The previous active row (`previousRow`).
+/// - `prev_col`: The previous active column (`previousCol`).
+/// - `click`: The click count (`click`).
+/// - `rid`: The relationship ID (`r:id`).
+/// - `area`: The pivot area of the selection (`pivotArea`).
+#[derive(Debug, Default, PartialEq, Clone, Eq, XmlWrite, XmlRead)]
+pub(crate) struct CTPivotSelection {
+    #[xml(name = "pane", default_bytes = b"topLeft")]
+    pane: Vec<u8>,
+    #[xml(name = "showHeader", default_bool = false)]
+    show_header: bool,
+    #[xml(name = "label", default_bool = false)]
+    label: bool,
+    #[xml(name = "data", default_bool = false)]
+    data: bool,
+    #[xml(name = "extendable", default_bool = false)]
+    extendable: bool,
+    #[xml(name = "count", default_bytes = b"0")]
+    count: Vec<u8>,
+    #[xml(name = "axis")]
+    axis: Vec<u8>,
+    #[xml(name = "dimension", default_bytes = b"0")]
+    dimension: Vec<u8>,
+    #[xml(name = "start", default_bytes = b"0")]
+    start: Vec<u8>,
+    #[xml(name = "min", default_bytes = b"0")]
+    min: Vec<u8>,
+    #[xml(name = "max", default_bytes = b"0")]
+    max: Vec<u8>,
+    #[xml(name = "activeRow", default_bytes = b"0")]
+    row: Vec<u8>,
+    #[xml(name = "activeCol", default_bytes = b"0")]
+    col: Vec<u8>,
+    #[xml(name = "previousRow", default_bytes = b"0")]
+    prev_row: Vec<u8>,
+    #[xml(name = "previousCol", default_bytes = b"0")]
+    prev_col: Vec<u8>,
+    #[xml(name = "click", default_bytes = b"0")]
+    click: Vec<u8>,
+    #[xml(name = "r:id")]
+    rid: Vec<u8>,
+
+    #[xml(element, name = "pivotArea")]
+    area: CTPivotArea,
+}
+impl CTPivotSelection {
+    /// Creates a new `CT_PivotSelection` instance with xml schema default values.
+    pub(crate) fn new() -> Self {
+        Self {
+            pane: b"topLeft".into(),
+            count: b"0".into(),
+            dimension: b"0".into(),
+            start: b"0".into(),
+            min: b"0".into(),
+            max: b"0".into(),
+            row: b"0".into(),
+            col: b"0".into(),
+            prev_row: b"0".into(),
+            prev_col: b"0".into(),
+            click: b"0".into(),
+            ..Default::default()
+        }
+    }
+}
