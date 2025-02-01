@@ -9,6 +9,32 @@ use quick_xml::{
 };
 use std::io::BufRead;
 
+/// Represents the dimensions of a worksheet, defining the range of cells that contain data.
+///
+/// This struct corresponds to the `CT_SheetDimension` complex type in the XML schema. It encapsulates
+/// a required attribute `ref` that specifies the cell range of the worksheet's dimensions.
+///
+/// # XML Schema Mapping
+/// The struct maps to the following XML schema definition:
+/// ```xml
+/// <complexType name="CT_SheetDimension">
+///     <attribute name="ref" type="ST_Ref" use="required"/>
+/// </complexType>
+/// ```
+///
+/// # Fields
+/// - `range`: The cell range of the worksheet's dimensions (`ref`).
+#[derive(Debug, PartialEq, Default, Clone, Eq, XmlWrite)]
+pub struct CTSheetDimension {
+    #[xml(name = "ref")]
+    range: Vec<u8>,
+}
+impl CTSheetDimension {
+    /// Creates a new `CT_SheetDimension` instance with xml schema default values.
+    pub fn new() -> Self {
+        Self { range: "A1".into() }
+    }
+}
 /// Represents the outline properties of a worksheet, defining how outlines are applied and displayed.
 ///
 /// This struct corresponds to the `CT_OutlinePr` complex type in the XML schema. It encapsulates
