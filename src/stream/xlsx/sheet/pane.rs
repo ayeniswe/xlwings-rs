@@ -9,9 +9,30 @@ use quick_xml::{
 };
 use std::io::BufRead;
 
-// Location of pane within sheet
+/// Represents the position of a pane in a spreadsheet.
+///
+/// This enum corresponds to the `ST_Pane` simple type in the XML schema, which defines
+/// the possible positions for panes within a worksheet.
+///
+/// # XML Schema Mapping
+/// ```xml
+/// <simpleType name="ST_Pane">
+///     <restriction base="xsd:string">
+///         <enumeration value="bottomLeft"/>
+///         <enumeration value="bottomRight"/>
+///         <enumeration value="topLeft"/>
+///         <enumeration value="topRight"/>
+///     </restriction>
+/// </simpleType>
+/// ```
+///
+/// # Variants
+/// - `BottomLeft` – Bottom left pane, used when both vertical and horizontal splits are applied.
+/// - `BottomRight` – Bottom right pane, used when both vertical and horizontal splits are applied.
+/// - `TopLeft` – Top left pane, used when both vertical and horizontal splits are applied.
+/// - `TopRight` – Top right pane, used when both vertical and horizontal splits are applied.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub(crate) enum PanePosition {
+pub enum PanePosition {
     BottomRight,
     TopRight,
     BottomLeft,
@@ -20,7 +41,10 @@ pub(crate) enum PanePosition {
 }
 impl TryFrom<Vec<u8>> for PanePosition {
     type Error = XlsxError;
-
+    /// Attempts to convert a `Vec<u8>` (raw XML byte data) into a `PanePosition` enum.
+    ///
+    /// # Errors
+    /// Returns `XlsxError::MissingVariant` if the value does not match any known pane position.
     fn try_from(value: Vec<u8>) -> Result<Self, Self::Error> {
         match value.as_slice() {
             b"bottomLeft" => Ok(PanePosition::BottomLeft),
@@ -37,16 +61,42 @@ impl TryFrom<Vec<u8>> for PanePosition {
         }
     }
 }
+/// Defines the state of a pane in a spreadsheet.
+///
+/// This enum corresponds to the `ST_PaneState` simple type in the XML schema, which
+/// specifies the state of the sheet's pane.
+///
+/// # XML Schema Mapping
+/// ```xml
+/// <simpleType name="ST_PaneState">
+///     <restriction base="xsd:string">
+///         <enumeration value="split"/>
+///         <enumeration value="frozen"/>
+///         <enumeration value="frozenSplit"/>
+///     </restriction>
+/// </simpleType>
+/// ```
+///
+/// # Variants
+/// - `Frozen` – Panes are frozen without prior splitting; unfreezing results in a single pane.
+/// - `Split` – Panes are split but not frozen; split bars are adjustable by the user.
+/// - `FrozenSplit` – Panes are frozen after being split; unfreezing retains the split, which becomes adjustable.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub(crate) enum PaneState {
+pub enum PaneState {
+    /// Panes are frozen without prior splitting; unfreezing results in a single pane.
     Frozen,
+    /// Panes are split but not frozen; split bars are adjustable by the user.
     #[default]
     Split,
+    /// Panes are frozen after being split; unfreezing retains the split, which becomes adjustable.
     FrozenSplit,
 }
 impl TryFrom<Vec<u8>> for PaneState {
     type Error = XlsxError;
-
+    /// Attempts to convert a `Vec<u8>` (raw XML byte data) into a `PaneState` enum.
+    ///
+    /// # Errors
+    /// Returns `XlsxError::MissingVariant` if the value does not match any known pane state.
     fn try_from(value: Vec<u8>) -> Result<Self, Self::Error> {
         match value.as_slice() {
             b"frozen" => Ok(PaneState::Frozen),
