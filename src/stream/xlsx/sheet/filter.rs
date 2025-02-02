@@ -268,7 +268,7 @@ impl CTFilters {
 /// ```
 ///
 /// # Fields
-/// - `icon_set`: The icon set to use for the filter (required).
+/// - `icon_set`: The icon set to use for the filter.
 /// - `icon_id`: An optional icon ID within the icon set.
 #[derive(Debug, Default, Clone, PartialEq, XmlRead, XmlWrite)]
 pub(crate) struct CTIconFilter {
@@ -561,7 +561,6 @@ struct CTCustomFilters {
     custom_filters: Vec<CTCustomFilter>,
     and_logic: bool,
 }
-
 impl CTCustomFilters {
     /// Creates a new `CT_CustomFilters` with xml schema default values (`and_logic` set to `false`).
     fn new() -> Self {
@@ -982,7 +981,7 @@ impl CTSortState {
 /// - `reference`: The reference for the range of the filter.
 /// - `filter_column`: A list of filter columns.
 /// - `sort_state`: The sorting state for the filter.
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, XmlRead, XmlWrite)]
 struct CTAutoFilter {
     reference: Vec<u8>,
     filter_column: Vec<CTFilterColumn>,
