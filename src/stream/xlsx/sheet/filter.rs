@@ -1,10 +1,8 @@
-use crate::{
-    errors::XlsxError,
-    stream::utils::{XmlReader, XmlWriter},
-};
+use crate::stream::{utils::{XmlReader, XmlWriter}, xlsx::errors::XlsxError};
 use derive::{XmlRead, XmlWrite};
 use quick_xml::{events::Event, Reader, Writer};
-use std::{default, io::BufRead};
+use std::io::{BufRead, Write};
+use serde::{Deserialize, Serialize};
 
 /// Represents the valid calendar types.
 ///
@@ -46,7 +44,7 @@ use std::{default, io::BufRead};
 /// - `GregorianArabic`: Represents the Arabic variant of the Gregorian calendar.
 /// - `GregorianXlitEnglish`: Represents the English transliterated Gregorian calendar.
 /// - `GregorianXlitFrench`: Represents the French transliterated Gregorian calendar.
-#[derive(Debug, Default, Clone, PartialEq, XmlRead, XmlWrite)]
+#[derive(Debug, Default, Clone, PartialEq)]
 pub enum STCalendarType {
     #[default]
     None,
@@ -63,29 +61,26 @@ pub enum STCalendarType {
     GregorianXlitEnglish,
     GregorianXlitFrench,
 }
-impl TryFrom<&str> for STCalendarType {
-    type Error = String;
-    fn try_from(value: &str) -> Result<Self, Self::Error> {
-        match value {
-            "none" => Ok(STCalendarType::None),
-            "gregorian" => Ok(STCalendarType::Gregorian),
-            "gregorianUs" => Ok(STCalendarType::GregorianUs),
-            "japan" => Ok(STCalendarType::Japan),
-            "taiwan" => Ok(STCalendarType::Taiwan),
-            "korea" => Ok(STCalendarType::Korea),
-            "hijri" => Ok(STCalendarType::Hijri),
-            "thai" => Ok(STCalendarType::Thai),
-            "hebrew" => Ok(STCalendarType::Hebrew),
-            "gregorianMeFrench" => Ok(STCalendarType::GregorianMeFrench),
-            "gregorianArabic" => Ok(STCalendarType::GregorianArabic),
-            "gregorianXlitEnglish" => Ok(STCalendarType::GregorianXlitEnglish),
-            "gregorianXlitFrench" => Ok(STCalendarType::GregorianXlitFrench),
+impl TryFrom<Vec<u8>> for STCalendarType {
+    type Error = XlsxError;
+    fn try_from(value: Vec<u8>) -> Result<Self, Self::Error> {
+        match value.as_slice() {
+            b"none" => Ok(STCalendarType::None),
+            b"gregorian" => Ok(STCalendarType::Gregorian),
+            b"gregorianUs" => Ok(STCalendarType::GregorianUs),
+            b"japan" => Ok(STCalendarType::Japan),
+            b"taiwan" => Ok(STCalendarType::Taiwan),
+            b"korea" => Ok(STCalendarType::Korea),
+            b"hijri" => Ok(STCalendarType::Hijri),
+            b"thai" => Ok(STCalendarType::Thai),
+            b"hebrew" => Ok(STCalendarType::Hebrew),
+            b"gregorianMeFrench" => Ok(STCalendarType::GregorianMeFrench),
+            b"gregorianArabic" => Ok(STCalendarType::GregorianArabic),
+            b"gregorianXlitEnglish" => Ok(STCalendarType::GregorianXlitEnglish),
+            b"gregorianXlitFrench" => Ok(STCalendarType::GregorianXlitFrench),
             v => {
                 let value = String::from_utf8_lossy(v);
-                Err(XlsxError::MissingVariant(
-                    "STCalendarType".into(),
-                    value.into(),
-                ))
+                Err(XlsxError::MissingVariant("STCalendarType".into(), value.into()))
             }
         }
     }
@@ -116,7 +111,7 @@ impl TryFrom<&str> for STCalendarType {
 /// - `Hour`: Represents grouping by hour.
 /// - `Minute`: Represents grouping by minute.
 /// - `Second`: Represents grouping by second.
-#[derive(Debug, Default, Clone, PartialEq, XmlRead, XmlWrite)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum STDateTimeGrouping {
     Year,
     Month,
@@ -125,23 +120,35 @@ pub enum STDateTimeGrouping {
     Minute,
     Second,
 }
-impl TryFrom<&str> for STDateTimeGrouping {
-    type Error = String;
-    fn try_from(value: &str) -> Result<Self, Self::Error> {
-        match value {
-            "year" => Ok(STDateTimeGrouping::Year),
-            "month" => Ok(STDateTimeGrouping::Month),
-            "day" => Ok(STDateTimeGrouping::Day),
-            "hour" => Ok(STDateTimeGrouping::Hour),
-            "minute" => Ok(STDateTimeGrouping::Minute),
-            "second" => Ok(STDateTimeGrouping::Second),
+impl TryFrom<Vec<u8>> for STDateTimeGrouping {
+    type Error = XlsxError;
+    fn try_from(value: Vec<u8>) -> Result<Self, Self::Error> {
+        match value.as_slice() {
+            b"year" => Ok(STDateTimeGrouping::Year),
+            b"month" => Ok(STDateTimeGrouping::Month),
+            b"day" => Ok(STDateTimeGrouping::Day),
+            b"hour" => Ok(STDateTimeGrouping::Hour),
+            b"minute" => Ok(STDateTimeGrouping::Minute),
+            b"second" => Ok(STDateTimeGrouping::Second),
             v => {
-                let value = String::from_utf8_lossy(v);
+                let value = String::from_utf8_lossy(v.into());
                 Err(XlsxError::MissingVariant(
                     "STDateTimeGrouping".into(),
                     value.into(),
                 ))
             }
+        }
+    }
+}
+impl From<STDateTimeGrouping> for Vec<u8> {
+    fn from(value: STDateTimeGrouping) -> Self {
+        match value {
+            STDateTimeGrouping::Year => b"year".to_vec(),
+            STDateTimeGrouping::Month => b"month".to_vec(),
+            STDateTimeGrouping::Day => b"day".to_vec(),
+            STDateTimeGrouping::Hour => b"hour".to_vec(),
+            STDateTimeGrouping::Minute => b"minute".to_vec(),
+            STDateTimeGrouping::Second => b"second".to_vec(),
         }
     }
 }
@@ -183,8 +190,10 @@ struct CTDateGroupItem {
 }
 impl CTDateGroupItem {
     /// Creates a new `CT_DateGroupItem` with XML schema default values.
-    fn new() -> Self {
+    fn new(year: u16, date_time_grouping: STDateTimeGrouping) -> Self {
         Self {
+            year: year.to_string().into(),
+            // date_time_grouping: date_time_grouping.,
             ..Default::default()
         }
     }
@@ -240,10 +249,11 @@ impl CTFilter {
 /// - `calendar_type`: The type of calendar used.
 #[derive(Debug, Default, Clone, PartialEq, XmlRead, XmlWrite)]
 struct CTFilters {
-    filters: Vec<CTFilter>,
-    date_group_items: Vec<CTDateGroupItem>,
     blank: bool,
     calendar_type: Vec<u8>,
+    #[xml(following_elements)]
+    filters: Vec<CTFilter>,
+    date_group_items: Vec<CTDateGroupItem>,
 }
 impl CTFilters {
     /// Creates a new `CT_Filters` instance with XML schema default values.
@@ -389,7 +399,7 @@ impl CTTop10 {
 /// - `YearToDate`: Filters from the start of the year until the current date.
 /// - `Q1`, `Q2`, `Q3`, `Q4`: Represents the quarters of the year.
 /// - `M1`, `M2`, `M3`, ..., `M12`: Represents the months of the year (from January to December).
-#[derive(Debug, Default, Clone, PartialEq, XmlRead, XmlWrite)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum STDynamicFilterType {
     Null,
     AboveAverage,
@@ -558,8 +568,9 @@ impl CTCustomFilter {
 /// - `and`: Whether the filters are combined using an AND logic (`false` by default).
 #[derive(Debug, Default, Clone, PartialEq, XmlRead, XmlWrite)]
 struct CTCustomFilters {
-    custom_filters: Vec<CTCustomFilter>,
     and_logic: bool,
+    #[xml(element)]
+    custom_filters: Vec<CTCustomFilter>,
 }
 impl CTCustomFilters {
     /// Creates a new `CT_CustomFilters` with xml schema default values (`and_logic` set to `false`).
@@ -617,7 +628,7 @@ impl CTColorFilter {
 ///
 /// The choice constraint in the XML schema guarantees that only one of these variants is applied to a
 /// column at any given time, making it important to handle the selection of filters accordingly.
-#[derive(Debug, Clone, PartialEq, XmlRead, XmlWrite)]
+#[derive(Debug, Clone, PartialEq)]
 enum Filter {
     /// Represents a standard filter applied to the column, based on cell values.
     Filters(CTFilters),
@@ -667,7 +678,8 @@ struct CTFilterColumn {
     col_id: Vec<u8>,
     hidden_button: bool,
     show_button: bool,
-    filter: Option<Filter>,
+    // #[xml(element)]
+    // filter: Option<Filter>,
 }
 impl CTFilterColumn {
     /// Creates a new `CT_FilterColumn` with xml schema default values.
@@ -948,6 +960,7 @@ struct CTSortState {
     case_sensitive: bool,
     sort_method: Vec<u8>,
     reference: Vec<u8>,
+    #[xml(element)]
     sort_conditions: Vec<CTSortCondition>,
 }
 impl CTSortState {
@@ -984,6 +997,7 @@ impl CTSortState {
 #[derive(Debug, Default, Clone, PartialEq, XmlRead, XmlWrite)]
 struct CTAutoFilter {
     reference: Vec<u8>,
+    #[xml(following_elements)]
     filter_column: Vec<CTFilterColumn>,
     sort_state: Option<CTSortState>,
 }

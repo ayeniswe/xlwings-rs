@@ -1,13 +1,10 @@
-use crate::{
-    errors::XlsxError,
-    stream::utils::{XmlReader, XmlWriter},
+use crate::stream::{
+    utils::{XmlReader, XmlWriter},
+    xlsx::XlsxError,
 };
 use derive::{XmlRead, XmlWrite};
-use quick_xml::{
-    events::{Event},
-    Reader, Writer,
-};
-use std::io::BufRead;
+use quick_xml::{events::Event, Reader, Writer};
+use std::io::{BufRead, Write};
 
 /// Represents the dimensions of a worksheet, defining the range of cells that contain data.
 ///
@@ -172,11 +169,10 @@ pub(crate) struct CTSheetPr {
     #[xml(name = "enableFormatConditionsCalculation", default_bool = true)]
     enable_cond_format_calc: bool,
 
-    #[xml(element)]
-    tab_color: Option<Color>,
-    #[xml(element)]
+    #[xml(following_elements)]
+    ///////// TODO: Need to adapt this to new macro by adding enum support
+    // tab_color: Option<Color>,
     outline_pr: Option<CTOutlinePr>,
-    #[xml(element)]
     page_setup_pr: Option<CTPageSetupPr>,
 }
 impl CTSheetPr {

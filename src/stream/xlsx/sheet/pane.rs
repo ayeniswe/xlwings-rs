@@ -1,13 +1,10 @@
-use crate::{
-    errors::XlsxError,
-    stream::utils::{XmlReader, XmlWriter},
+use crate::stream::{
+    utils::{XmlReader, XmlWriter},
+    xlsx::XlsxError,
 };
 use derive::{XmlRead, XmlWrite};
-use quick_xml::{
-    events::{Event},
-    Reader, Writer,
-};
-use std::io::BufRead;
+use quick_xml::{events::Event, Reader, Writer};
+use std::io::{BufRead, Write};
 
 /// Represents the position of a pane in a spreadsheet.
 ///
@@ -32,31 +29,24 @@ use std::io::BufRead;
 /// - `TopLeft` – Top left pane, used when both vertical and horizontal splits are applied.
 /// - `TopRight` – Top right pane, used when both vertical and horizontal splits are applied.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub enum PanePosition {
+enum STPane {
     BottomRight,
     TopRight,
     BottomLeft,
     #[default]
     TopLeft,
 }
-impl TryFrom<Vec<u8>> for PanePosition {
+impl TryFrom<Vec<u8>> for STPane {
     type Error = XlsxError;
-    /// Attempts to convert a `Vec<u8>` (raw XML byte data) into a `PanePosition` enum.
-    ///
-    /// # Errors
-    /// Returns `XlsxError::MissingVariant` if the value does not match any known pane position.
     fn try_from(value: Vec<u8>) -> Result<Self, Self::Error> {
         match value.as_slice() {
-            b"bottomLeft" => Ok(PanePosition::BottomLeft),
-            b"bottomRight" => Ok(PanePosition::BottomRight),
-            b"topLeft" => Ok(PanePosition::TopLeft),
-            b"topRight" => Ok(PanePosition::TopRight),
+            b"bottomLeft" => Ok(STPane::BottomLeft),
+            b"bottomRight" => Ok(STPane::BottomRight),
+            b"topLeft" => Ok(STPane::TopLeft),
+            b"topRight" => Ok(STPane::TopRight),
             v => {
                 let value = String::from_utf8_lossy(v);
-                Err(XlsxError::MissingVariant(
-                    "PanePosition".into(),
-                    value.into(),
-                ))
+                Err(XlsxError::MissingVariant("STPane".into(), value.into()))
             }
         }
     }
@@ -82,7 +72,7 @@ impl TryFrom<Vec<u8>> for PanePosition {
 /// - `Split` – Panes are split but not frozen; split bars are adjustable by the user.
 /// - `FrozenSplit` – Panes are frozen after being split; unfreezing retains the split, which becomes adjustable.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub enum PaneState {
+pub enum STPaneState {
     /// Panes are frozen without prior splitting; unfreezing results in a single pane.
     Frozen,
     /// Panes are split but not frozen; split bars are adjustable by the user.
@@ -91,20 +81,16 @@ pub enum PaneState {
     /// Panes are frozen after being split; unfreezing retains the split, which becomes adjustable.
     FrozenSplit,
 }
-impl TryFrom<Vec<u8>> for PaneState {
+impl TryFrom<Vec<u8>> for STPaneState {
     type Error = XlsxError;
-    /// Attempts to convert a `Vec<u8>` (raw XML byte data) into a `PaneState` enum.
-    ///
-    /// # Errors
-    /// Returns `XlsxError::MissingVariant` if the value does not match any known pane state.
     fn try_from(value: Vec<u8>) -> Result<Self, Self::Error> {
         match value.as_slice() {
-            b"frozen" => Ok(PaneState::Frozen),
-            b"split" => Ok(PaneState::Split),
-            b"frozenSplit" => Ok(PaneState::FrozenSplit),
+            b"frozen" => Ok(STPaneState::Frozen),
+            b"split" => Ok(STPaneState::Split),
+            b"frozenSplit" => Ok(STPaneState::FrozenSplit),
             v => {
                 let value = String::from_utf8_lossy(v);
-                Err(XlsxError::MissingVariant("PaneState".into(), value.into()))
+                Err(XlsxError::MissingVariant("STPaneState".into(), value.into()))
             }
         }
     }
@@ -148,7 +134,7 @@ pub(crate) struct CTPane {
 }
 impl CTPane {
     /// Creates a new `CT_Pane` instance with xml schema default values.
-    pub fn new() -> Self {
+    fn new() -> Self {
         Self {
             x_split: b"0".into(),
             y_split: b"0".into(),

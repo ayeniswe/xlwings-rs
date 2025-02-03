@@ -1,13 +1,11 @@
-use crate::{
-    errors::XlsxError,
-    stream::utils::{XmlReader, XmlWriter},
+use super::index::CTIndex;
+use crate::stream::{
+    utils::{XmlReader, XmlWriter},
+    xlsx::XlsxError,
 };
 use derive::{XmlRead, XmlWrite};
-use quick_xml::{
-    events::{Event},
-    Reader, Writer,
-};
-use std::io::BufRead;
+use quick_xml::{events::Event, Reader, Writer};
+use std::io::{BufRead, Write};
 
 /// Represents a selected field and item within its parent in a `PivotTable`.
 ///
@@ -215,7 +213,7 @@ pub(crate) struct CTPivotArea {
     #[xml(name = "fieldPosition")]
     field_pos: Vec<u8>,
 
-    #[xml(element, name ="references")]
+    #[xml(element, name = "references")]
     reference_collection: CTPivotAreaReferences,
 }
 impl CTPivotArea {
@@ -323,7 +321,7 @@ pub(crate) struct CTPivotSelection {
 }
 impl CTPivotSelection {
     /// Creates a new `CT_PivotSelection` instance with xml schema default values.
-    pub(crate) fn new() -> Self {
+    fn new() -> Self {
         Self {
             pane: b"topLeft".into(),
             count: b"0".into(),

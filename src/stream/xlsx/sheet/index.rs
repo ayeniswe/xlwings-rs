@@ -1,13 +1,10 @@
-use crate::{
-    errors::XlsxError,
-    stream::utils::{XmlReader, XmlWriter},
+use crate::stream::{
+    utils::{XmlReader, XmlWriter},
+    xlsx::XlsxError,
 };
 use derive::{XmlRead, XmlWrite};
-use quick_xml::{
-    events::{Event},
-    Reader, Writer,
-};
-use std::io::BufRead;
+use quick_xml::{events::Event, Reader, Writer};
+use std::io::{BufRead, Write};
 
 /// Represents an index within a `PivotTable` selection.
 ///
@@ -31,7 +28,7 @@ pub(crate) struct CTIndex {
 }
 impl CTIndex {
     /// Creates a new `CT_Index` instance with xml schema default values.
-    pub(crate) fn new() -> Self {
+    fn new() -> Self {
         Self {
             ..Default::default()
         }

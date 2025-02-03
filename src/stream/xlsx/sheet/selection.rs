@@ -1,13 +1,10 @@
-use crate::{
-    errors::XlsxError,
-    stream::utils::{XmlReader, XmlWriter},
+use crate::stream::{
+    utils::{XmlReader, XmlWriter},
+    xlsx::XlsxError,
 };
 use derive::{XmlRead, XmlWrite};
-use quick_xml::{
-    events::{Event},
-    Reader, Writer,
-};
-use std::io::BufRead;
+use quick_xml::{events::Event, Reader, Writer};
+use std::io::{BufRead, Write};
 
 /// Represents a selection within a sheet view, defining the active cell, pane, and selected range.
 ///
@@ -45,7 +42,7 @@ pub(crate) struct CTSelection {
 }
 impl CTSelection {
     /// Creates a new `CT_Selection` instance with xml schema default values.
-    pub(crate) fn new() -> Self {
+    fn new() -> Self {
         Self {
             sqref: b"A1".into(),
             cell_id: b"0".into(),

@@ -1,13 +1,13 @@
-use crate::{
-    errors::XlsxError,
-    stream::utils::{XmlReader, XmlWriter},
+use crate::stream::{
+    utils::{XmlReader, XmlWriter},
+    xlsx::XlsxError,
 };
 use derive::{XmlRead, XmlWrite};
-use quick_xml::{
-    events::{Event},
-    Reader, Writer,
-};
-use std::io::BufRead;
+use quick_xml::{events::Event, Reader, Writer};
+use std::io::{BufRead, Write};
+
+use super::{pane::CTPane, pivot::CTPivotSelection, selection::CTSelection};
+
 
 /// Represents a sheet view in a spreadsheet, defining visual and behavioral settings for a worksheet.
 ///
@@ -114,11 +114,11 @@ pub(crate) struct CTSheetView {
     #[xml(name = "workbookViewId")]
     view_id: Vec<u8>,
 
-    #[xml(element, name = "pane")]
+    #[xml(following_elements, name = "pane")]
     pane: Option<CTPane>,
-    #[xml(element, name = "selection")]
+    #[xml(name = "selection")]
     selection: Option<CTSelection>,
-    #[xml(element, name = "pivotSelection")]
+    #[xml(name = "pivotSelection")]
     pivot_selection: Option<CTPivotSelection>,
 }
 impl CTSheetView {

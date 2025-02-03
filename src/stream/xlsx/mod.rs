@@ -36,15 +36,15 @@ impl<RS: Read + Seek> Xlsx<RS> {
     fn read_stylesheet(&mut self) -> Result<(), XlsxError> {
         self.style.read_stylesheet(&mut self.zip)
     }
-    fn read_sheet(&mut self, name: &str) -> Result<(), XlsxError> {
-        // Plan to use workbook reader to create the sheets that
-        // will store the paths location for lazy reading of sheets
-        if let Some(sheet) = self.sheets.get_mut(name) {
-            Ok(sheet.read_sheet(&mut self.zip)?)
-        } else {
-            Err(XlsxError::SheetNotFound(name.to_string()))
-        }
-    }
+    // fn read_sheet(&mut self, name: &str) -> Result<(), XlsxError> {
+    //     // Plan to use workbook reader to create the sheets that
+    //     // will store the paths location for lazy reading of sheets
+    //     if let Some(sheet) = self.sheets.get_mut(name) {
+    //         Ok(sheet.read_sheet(&mut self.zip)?)
+    //     } else {
+    //         Err(XlsxError::SheetNotFound(name.to_string()))
+    //     }
+    // }
     fn save(&mut self, name: &str) -> Result<(), XlsxError> {
         let mut zip = ZipWriter::new(File::create(name)?);
         let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
