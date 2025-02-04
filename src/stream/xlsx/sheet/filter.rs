@@ -2,7 +2,6 @@ use crate::stream::{utils::{XmlReader, XmlWriter}, xlsx::errors::XlsxError};
 use derive::{XmlRead, XmlWrite};
 use quick_xml::{events::Event, Reader, Writer};
 use std::io::{BufRead, Write};
-use serde::{Deserialize, Serialize};
 
 /// Represents the valid calendar types.
 ///
@@ -628,19 +627,25 @@ impl CTColorFilter {
 ///
 /// The choice constraint in the XML schema guarantees that only one of these variants is applied to a
 /// column at any given time, making it important to handle the selection of filters accordingly.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, XmlRead)]
 enum Filter {
     /// Represents a standard filter applied to the column, based on cell values.
+    #[xml(name = "filters")]
     Filters(CTFilters),
     /// Represents a filter that selects the top 10 items from the column, typically numeric values.
+    #[xml(name = "top10")]
     Top10(CTTop10),
     /// Represents a custom filter applied to the column, allowing advanced filtering logic.
+    #[xml(name = "customFilters")]
     CustomFilters(CTCustomFilters),
     /// Represents a dynamic filter, which is often based on changing or conditional data.
+    #[xml(name = "dynamicFilter")]
     DynamicFilter(CTDynamicFilter),
     /// Represents a filter based on cell color, useful for visually distinguishing data.
+    #[xml(name = "colorFilter")]
     ColorFilter(CTColorFilter),
     /// Represents a filter based on icons, used to group or categorize data visually.
+    #[xml(name = "iconFilter")]
     IconFilter(CTIconFilter),
 }
 /// Represents a filter column in a spreadsheet, defining various filter options and settings.
@@ -673,13 +678,13 @@ enum Filter {
 /// - `hidden_button`: Whether the button for the column is hidden (`hiddenButton`).
 /// - `show_button`: Whether the button for the column is visible (`showButton`).
 /// - `filter`: The filter type for the column, which can be one of the `Filter` options
-#[derive(Debug, Default, Clone, PartialEq, XmlRead, XmlWrite)]
+#[derive(Debug, Default, Clone, PartialEq, XmlRead)]
 struct CTFilterColumn {
     col_id: Vec<u8>,
     hidden_button: bool,
     show_button: bool,
-    // #[xml(element)]
-    // filter: Option<Filter>,
+    #[xml(element)]
+    filter: Option<Filter>,
 }
 impl CTFilterColumn {
     /// Creates a new `CT_FilterColumn` with xml schema default values.
@@ -994,7 +999,7 @@ impl CTSortState {
 /// - `reference`: The reference for the range of the filter.
 /// - `filter_column`: A list of filter columns.
 /// - `sort_state`: The sorting state for the filter.
-#[derive(Debug, Default, Clone, PartialEq, XmlRead, XmlWrite)]
+#[derive(Debug, Default, Clone, PartialEq, XmlRead)]
 struct CTAutoFilter {
     reference: Vec<u8>,
     #[xml(following_elements)]
