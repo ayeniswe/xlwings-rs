@@ -120,9 +120,9 @@ pub fn derive_xml_writer(input: TokenStream) -> TokenStream {
     writer::impl_xml_writer(input)
 }
 
-/// Derive macro for generating XML serialization code.
+/// Derive macro for deserialization code to XML.
 ///
-/// This macro generates an implementation of the `XmlWrite` trait for the annotated struct.
+/// This macro generates an implementation of the `XmlRead` trait for the annotated struct.
 /// The struct's fields can be customized using the `#[xml(...)]` attribute.
 ///
 /// # Attributes
@@ -136,7 +136,7 @@ pub fn derive_xml_writer(input: TokenStream) -> TokenStream {
 /// - **Usage**: Applied to struct fields.
 /// - **Example**:
 ///   ```rust
-///   #[derive(XmlWrite)]
+///   #[derive(XmlRead)]
 ///   struct MyStruct {
 ///       #[x(name = "custom_name")]
 ///       field: i32,
@@ -152,7 +152,7 @@ pub fn derive_xml_writer(input: TokenStream) -> TokenStream {
 /// - **Usage**: Applied to struct fields.
 /// - **Example**:
 ///   ```rust
-///   #[derive(XmlWrite)]
+///   #[derive(XmlRead)]
 ///   struct MyStruct {
 ///       #[xml(element)]
 ///       active: MySubStruct,
@@ -164,7 +164,7 @@ pub fn derive_xml_writer(input: TokenStream) -> TokenStream {
 /// - **Usage**: Applied to a single struct fields and the following fields are as if `xml(element)`` is applied to each following field.       
 /// - **Example**:
 ///   ```rust
-///   #[derive(XmlWrite)]
+///   #[derive(XmlRead)]
 ///   struct MyStruct {
 ///       #[xml(following_elements)]
 ///       active: MySubStruct,
@@ -180,7 +180,7 @@ pub fn derive_xml_writer(input: TokenStream) -> TokenStream {
 /// - **Usage**: Applied to a single struct fields.       
 /// - **Example**:
 ///   ```rust
-///   #[derive(XmlWrite)]
+///   #[derive(XmlRead)]
 ///   struct MyStruct {
 ///       #[xml(skip)]
 ///       extra_info: String,
@@ -193,7 +193,7 @@ pub fn derive_xml_writer(input: TokenStream) -> TokenStream {
 ///
 /// Basic usage:
 /// ```rust
-/// #[derive(XmlWrite)]
+/// #[derive(XmlRead)]
 /// struct MyStruct {
 ///     #[xml(name = "active_pane", default = true)]
 ///     active: bool,
