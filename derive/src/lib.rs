@@ -74,7 +74,7 @@ use proc_macro::TokenStream;
 ///
 /// ## `#[xml(following_elements)]`
 /// - **Purpose**: Specifies all following fields to be used as an element.
-/// - **Usage**: Applied to a single struct fields and the following fields are as if `xml(element)`` is applied to each following field.       
+/// - **Usage**: Applied to a single struct fields and the following fields are as if `xml(element)`` is applied to each following field.
 /// - **Example**:
 ///   ```rust
 ///   #[derive(XmlWrite)]
@@ -90,7 +90,7 @@ use proc_macro::TokenStream;
 ///
 /// ## `#[xml(skip)]`
 /// - **Purpose**: Specifies to skip the serialization of a field.
-/// - **Usage**: Applied to a single struct fields.       
+/// - **Usage**: Applied to a single struct fields.
 /// - **Example**:
 ///   ```rust
 ///   #[derive(XmlWrite)]
@@ -161,7 +161,7 @@ pub fn derive_xml_writer(input: TokenStream) -> TokenStream {
 ///
 /// ## `#[xml(following_elements)]`
 /// - **Purpose**: Specifies all following fields to be used as an element.
-/// - **Usage**: Applied to a single struct fields and the following fields are as if `xml(element)`` is applied to each following field.       
+/// - **Usage**: Applied to a single struct fields and the following fields are as if `xml(element)`` is applied to each following field.
 /// - **Example**:
 ///   ```rust
 ///   #[derive(XmlRead)]
@@ -177,13 +177,29 @@ pub fn derive_xml_writer(input: TokenStream) -> TokenStream {
 ///
 /// ## `#[xml(skip)]`
 /// - **Purpose**: Specifies to skip the serialization of a field.
-/// - **Usage**: Applied to a single struct fields.       
+/// - **Usage**: Applied to a single struct fields.
 /// - **Example**:
 ///   ```rust
 ///   #[derive(XmlRead)]
 ///   struct MyStruct {
 ///       #[xml(skip)]
 ///       extra_info: String,
+///   }
+///   ```
+/// - **Notes**:
+///   - The field ignores the other attribute's options
+///
+/// ## `#[xml(sequence)]`
+/// - **Purpose**: Specifies that the following elements must follow a sequence one after the other
+/// - **Usage**: Applied to a single struct fields.
+/// - **Example**:
+///   ```rust
+///   #[derive(XmlRead)]
+///   struct MyStruct {
+///       #[xml(sequence)]
+///       item: String,
+///       item2: String,
+///       item3: String,
 ///   }
 ///   ```
 /// - **Notes**:

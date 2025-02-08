@@ -64,6 +64,18 @@ mod xml_reader_derive {
     use quick_xml::{events::Event, Reader};
     use std::io::{BufRead, Cursor};
 
+    #[derive(XmlRead, Default, PartialEq, Eq, Debug)]
+    struct Example {
+        active_pane: bool,
+        #[xml(following_elements, sequence)]
+        side: Vec<SideExample>,
+        side2: Vec<SideExample>,
+    }
+    #[derive(XmlRead, Default, PartialEq, Eq, Debug)]
+    struct SideExample {
+        active_pane: bool,
+        window: Vec<u8>,
+    }
     #[test]
     fn test_xml_reader_empty_tag_attributes() {
         #[derive(XmlRead, Default, PartialEq, Eq, Debug)]
@@ -369,15 +381,13 @@ mod xml_reader_derive {
             }
         );
     }
-    ///// SHOUDL FAILED NOT FIXED
     #[test]
     fn test_xml_reader_element_as_array_with_sequence() {
         #[derive(XmlRead, Default, PartialEq, Eq, Debug)]
         struct Example {
             active_pane: bool,
-            #[xml(element)]
+            #[xml(following_elements, sequence)]
             side: Vec<SideExample>,
-            #[xml(element)]
             side2: Vec<SideExample>,
         }
         #[derive(XmlRead, Default, PartialEq, Eq, Debug)]
@@ -388,11 +398,12 @@ mod xml_reader_derive {
 
         let xml_content = r#"
         <ex active_pane="1">
-            <side window="hello2" active_pane="true" />
-            <side window="hello3" active_pane="true" />
-            <side window="hello1" active_pane="true" />
-            <side2 window="side2 hello1" active_pane="true" />
-            <side2 window="side2 hello12" active_pane="true" />
+            <side window="hello2" active_pane="true"/>
+            <side window="hello3" active_pane="true"/>
+            <side window="hello1" active_pane="true"/>
+            <side2 window="side2 hello12" active_pane="true"/>
+            <side2 window="side2 hello123" active_pane="true"/>
+            <side2 window="side2 hello1" active_pane="true"/>
         </ex>
         "#;
         let mut xml = Reader::from_reader(Cursor::new(xml_content));
@@ -421,11 +432,15 @@ mod xml_reader_derive {
                 side2: vec![
                     SideExample {
                         active_pane: true,
-                        window: b"side2 hello1".to_vec()
+                        window: b"side2 hello12".to_vec()
                     },
                     SideExample {
                         active_pane: true,
-                        window: b"side2 hello12".to_vec()
+                        window: b"side2 hello123".to_vec()
+                    },
+                    SideExample {
+                        active_pane: true,
+                        window: b"side2 hello1".to_vec()
                     },
                 ]
             }
