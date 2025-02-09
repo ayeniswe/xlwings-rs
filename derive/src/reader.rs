@@ -213,28 +213,79 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
 
         // Generate the logic for reading the field to XML attributes
         if inner_value {
-            elements.push(quote! {
-                Ok(Event::Text(ref e)) => {
-                    self.#field_name = e.as_ref().into();
-                    #field_name = true;
-                    break;
+            let result = match &field.ty {
+                syn::Type::Path(type_path) => {
+                    match &type_path.path.segments[0].arguments {
+                        syn::PathArguments::AngleBracketed(inner) => {
+                             match &inner.args[0] {
+                                syn::GenericArgument::Type(inner_type) => {
+                                    if inner_type.to_token_stream().to_string() == "u8" {
+                                        Ok(())
+                                    } else {
+                                        Err(Error::new(
+                                            inner_type.span(),
+                                            "Only Vec<u8> is supported for inner value. Specify `#[xml(element)]` if you want to serialize it as an element",
+                                        ))
+                                    }
+                                }
+                                args => {
+                                    Err(Error::new(
+                                        args.span(),
+                                        format!(
+                                            "Unsupported angle bracket args `{}` for inner value",
+                                            generic.into_token_stream()
+                                        ),
+                                    ))
+                                }
+                             }
+                        }
+                        arg => {
+                            Err(Error::new(
+                                arg.span(),
+                                format!(
+                                    "Unsupported type path args `{}` for inner value",
+                                    arg.into_token_stream()
+                                ),
+                            )),
+                        }
+                    }
                 }
-            });
-            initial_item_elements.push(quote! {
-                Ok(Event::Text(ref e)) => {
-                    item.#field_name = e.as_ref().into();
-                    #field_name = true;
-                    break;
-                }
-            });
-            check_elements.push(quote! {
-                if !#field_name {
-                    panic!("Missing required inner text `{}`", #field_name_str);
-                }
-            });
-            init_check_elements.push(quote! {
-                let mut #field_name = false;
-            });
+                ty => Err(Error::new(
+                    ty.span(),
+                    format!(
+                        "Unsupported field type path `{}`",
+                        ty.into_token_stream()
+                    ),
+                )),
+            }
+            
+            if Err(e) = result {
+                panic!("Failed to parse: {}", e);
+            }
+            else {
+                elements.push(quote! {
+                    Ok(Event::Text(ref e)) => {
+                        self.#field_name = e.as_ref().into();
+                        #field_name = true;
+                        break;
+                    }
+                });
+                initial_item_elements.push(quote! {
+                    Ok(Event::Text(ref e)) => {
+                        item.#field_name = e.as_ref().into();
+                        #field_name = true;
+                        break;
+                    }
+                });
+                check_elements.push(quote! {
+                    if !#field_name {
+                        panic!("Missing required inner text `{}`", #field_name_str);
+                    }
+                });
+                init_check_elements.push(quote! {
+                    let mut #field_name = false;
+                });
+            }
         } else if !element && !following_elements {
             let attr_read_logic = match &field.ty {
                 syn::Type::Path(type_path) => {
