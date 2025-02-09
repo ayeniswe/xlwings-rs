@@ -67,14 +67,34 @@ mod xml_reader_derive {
     #[derive(XmlRead, Default, PartialEq, Eq, Debug)]
     struct Example {
         active_pane: bool,
-        #[xml(following_elements, sequence)]
-        side: Vec<SideExample>,
-        side2: Vec<SideExample>,
+        #[xml(val)]
+        inner: Vec<u8>,
     }
-    #[derive(XmlRead, Default, PartialEq, Eq, Debug)]
-    struct SideExample {
-        active_pane: bool,
-        window: Vec<u8>,
+
+    #[test]
+    fn test_xml_reader_inner_text() {
+        #[derive(XmlRead, Default, PartialEq, Eq, Debug)]
+        struct Example {
+            active_pane: bool,
+            #[xml(val)]
+            inner: Vec<u8>,
+        }
+        let xml_content = r#"
+        <Example active_pane="1">Hello World</Example>"#;
+        let mut xml = Reader::from_reader(Cursor::new(xml_content));
+        let mut example = Example {
+            ..Default::default()
+        };
+        example
+            .read_xml("Example", &mut xml, "Example", &mut None)
+            .unwrap();
+        assert_eq!(
+            example,
+            Example {
+                active_pane: true,
+                inner: b"Hello World".to_vec()
+            }
+        );
     }
     #[test]
     fn test_xml_reader_empty_tag_attributes() {

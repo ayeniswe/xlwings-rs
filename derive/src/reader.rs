@@ -80,6 +80,7 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
     let mut initial_item_elements = Vec::new(); // tag elements used with a initial item
     let mut check_elements = Vec::new(); // code to verify data has been captured
     let mut init_check_elements = Vec::new(); // code to initialization for checking elements
+    let mut inner = quote! {}; // the inner value
 
     // Gather information if enum variants were found
     // Only supports elements
@@ -156,6 +157,7 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
         // Gather struct fields optional metadata
         let mut element = false;
         let mut skip = false;
+        let mut inner_value = false;
         for attr in &field.attrs {
             let result = if attr.path().is_ident("xml") {
                 attr.parse_nested_meta(|meta| {
@@ -172,6 +174,8 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
                         }
                     } else if meta.path.is_ident("skip") {
                         skip = true;
+                    } else if meta.path.is_ident("val") {
+                        inner_value = true;
                     } else if meta.path.is_ident("following_elements") {
                         following_elements = true;
                     } else if meta.path.is_ident("element") {
@@ -208,7 +212,30 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
         }
 
         // Generate the logic for reading the field to XML attributes
-        if !element && !following_elements {
+        if inner_value {
+            elements.push(quote! {
+                Ok(Event::Text(ref e)) => {
+                    self.#field_name = e.as_ref().into();
+                    #field_name = true;
+                    break;
+                }
+            });
+            initial_item_elements.push(quote! {
+                Ok(Event::Text(ref e)) => {
+                    item.#field_name = e.as_ref().into();
+                    #field_name = true;
+                    break;
+                }
+            });
+            check_elements.push(quote! {
+                if !#field_name {
+                    panic!("Missing required inner text `{}`", #field_name_str);
+                }
+            });
+            init_check_elements.push(quote! {
+                let mut #field_name = false;
+            });
+        } else if !element && !following_elements {
             let attr_read_logic = match &field.ty {
                 syn::Type::Path(type_path) => {
                     let last_segment = type_path.path.segments.last().unwrap();
@@ -532,7 +559,6 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
                                         }
                                     }
                                 }
-
                                 // Read the nested tag contents
                                 if let Ok(Event::Start(_)) = event {
                                     let mut nested_buf = Vec::with_capacity(1024);
