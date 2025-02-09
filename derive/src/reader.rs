@@ -54,21 +54,21 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
             _ => panic!("Only struct with named fields is supported"),
         }
     };
-    // OR
-    // Gather all enum variants
+    // OR: If the input isn’t a struct, handle an enum instead.
     let mut variants_fields = Vec::new();
     if let Data::Enum(data_enum) = &input.data {
         let mut fields = Vec::new();
         for variant in &data_enum.variants {
+            // Only process variants that are tuple-like (unnamed fields).
             match &variant.fields {
                 Fields::Unnamed(u) => {
                     if u.unnamed.len() > 1 {
-                        panic!("Only variants with a single unnamed field are supported")
+                        panic!("Only tuple-like variants with a single field are supported")
                     } else {
                         fields.push((variant, u.unnamed.iter().last().unwrap()))
                     }
                 }
-                _ => panic!("Only enums with unnamed fields are supported"),
+                _ => panic!("Only enums variants tuple-like are supported"),
             }
         }
         variants_fields = fields
