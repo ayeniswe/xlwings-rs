@@ -6,14 +6,18 @@ use syn::{
 };
 
 pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
-    // Gather the code definition
+    // Parse the incoming token stream into a structured representation of the type (DeriveInput).
     let input = parse_macro_input!(input as DeriveInput);
+    // Extract the identifier (name) of the type (struct or enum) that the macro is processing.
     let name = &input.ident;
+    // Convert the identifier into a mutable string, allowing for later customization via attributes.
     let mut name_str = name.to_string();
-
-    // Gather top level struct metadata
+    
+    // Gather top-level metadata from the struct’s attributes.
     for attr in input.attrs {
+        // Check and parse attributes based on their identifier.
         let result = if attr.path().is_ident("xml") {
+            // If the attribute is #[xml(...)]
             attr.parse_nested_meta(|meta| {
                 if meta.path.is_ident("name") {
                     name_str = meta.value()?.parse::<LitStr>()?.value();
@@ -26,7 +30,7 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
                 Ok(())
             })
         } else if attr.path().is_ident("doc") {
-            // Ignore `#[doc]` attributes (doc comments)
+            // If the attribute is a documentation comment (#[doc]), ignore it.
             Ok(())
         } else {
             Err(Error::new(
@@ -37,7 +41,6 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
                 ),
             ))
         };
-
         if let Err(e) = result {
             panic!("Failed to parse: {}", e);
         }
