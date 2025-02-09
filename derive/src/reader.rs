@@ -59,7 +59,6 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
     let mut variants_fields = Vec::new();
     if let Data::Enum(data_enum) = &input.data {
         let mut fields = Vec::new();
-
         for variant in &data_enum.variants {
             match &variant.fields {
                 Fields::Unnamed(u) => {
@@ -72,7 +71,6 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
                 _ => panic!("Only enums with unnamed fields are supported"),
             }
         }
-
         variants_fields = fields
     }
 
