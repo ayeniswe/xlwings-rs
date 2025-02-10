@@ -249,11 +249,13 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
 
         // Generate the logic for reading the field to XML attributes
         if inner_value {
+            // Validate that the field’s type is supported for inner text extraction.
+            // This branch specifically only accepts a Vec<u8> type.
             let result = match &field.ty {
                 syn::Type::Path(type_path) => {
                     match &type_path.path.segments[0].arguments {
                         syn::PathArguments::AngleBracketed(inner) => {
-                             match &inner.args[0] {
+                            match &inner.args[0] {
                                 syn::GenericArgument::Type(inner_type) => {
                                     if inner_type.to_token_stream().to_string() == "u8" {
                                         Ok(())
@@ -269,11 +271,11 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
                                         args.span(),
                                         format!(
                                             "Unsupported angle bracket args `{}` for inner value",
-                                            generic.into_token_stream()
+                                            args.into_token_stream()
                                         ),
                                     ))
                                 }
-                             }
+                            }
                         }
                         arg => {
                             Err(Error::new(
@@ -282,7 +284,7 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
                                     "Unsupported type path args `{}` for inner value",
                                     arg.into_token_stream()
                                 ),
-                            )),
+                            ))
                         }
                     }
                 }
@@ -293,12 +295,11 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
                         ty.into_token_stream()
                     ),
                 )),
-            }
-            
-            if Err(e) = result {
+            };
+
+            if let Err(e) = result {
                 panic!("Failed to parse: {}", e);
-            }
-            else {
+            } else {
                 elements.push(quote! {
                     Ok(Event::Text(ref e)) => {
                         self.#field_name = e.as_ref().into();
