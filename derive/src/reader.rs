@@ -74,35 +74,38 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
         variants_fields = fields
     }
 
-    // XML serialization code
-    let mut attributes = Vec::new(); // tag attributes
-    let mut initial_item_attributes = Vec::new(); // tag attributes used in vec
-    let mut elements = Vec::new(); // tag elements
-    let mut initial_item_elements = Vec::new(); // tag elements used with a initial item
-    let mut check_elements = Vec::new(); // code to verify data has been captured
-    let mut init_check_elements = Vec::new(); // code to initialization for checking elements
-    let mut inner = quote! {}; // the inner value
+    // XML serialization code: prepare containers for various XML parsing components.
+    let mut attributes = Vec::new(); // Holds code fragments to process XML tag attributes.
+    let mut initial_item_attributes = Vec::new(); // Stores attribute logic used during initial item parsing (for collections or optionals).
+    let mut elements = Vec::new(); // Contains code fragments for handling XML child elements.
+    let mut initial_item_elements = Vec::new(); // Stores element logic for initial item processing.
+    let mut check_elements = Vec::new(); // Accumulates code to verify that all required XML data has been captured.
+    let mut init_check_elements = Vec::new(); // Gathers code to initialize flags or state for element presence checking.
 
     // Gather information if enum variants were found
     // Only supports elements
     for variant in &variants_fields {
+        // Destructure each tuple to get the enum variant definition and its associated field type.
         let (variant, variant_field_type) = (variant.0, variant.1);
-        // Get code enum variant definition
+        // Retrieve the variant's identifier and convert it to a string, which will serve as the default XML tag name.
         let variant_name = &variant.ident;
         let mut variant_name_str = variant_name.to_string();
-
+        // Process each attribute attached to the variant.
         for attr in &variant.attrs {
             let result = if attr.path().is_ident("xml") {
+                // If the attribute is #[xml(...)], parse its nested metadata.
                 attr.parse_nested_meta(|meta| {
+                    // If a 'name' option is provided, override the default tag name with this value.
                     if meta.path.is_ident("name") {
                         variant_name_str = meta.value()?.parse::<LitStr>()?.value();
                     }
                     Ok(())
                 })
             } else if attr.path().is_ident("doc") {
-                // Ignore `#[doc]` attributes (doc comments)
+                // Ignore documentation attributes.
                 Ok(())
             } else {
+                // Any other attribute is not supported and results in an error.
                 Err(Error::new(
                     attr.span(),
                     format!(
@@ -111,26 +114,34 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
                     ),
                 ))
             };
-
+            // If parsing fails, terminate with an error.
             if let Err(e) = result {
                 panic!("Failed to parse: {}", e);
             }
         }
-
+        // Generate the code fragment to handle XML events for this enum variant.
+        // This fragment matches events (either Empty or Start) whose tag name matches the variant's XML name.
         elements.push(quote! {
             Ok(Event::Empty(ref e)) | Ok(Event::Start(ref e)) if e.local_name().as_ref() == #variant_name_str.as_bytes() => {
                 propagated_event.replace(Ok(event.unwrap().into_owned()));
+                // Create a default instance of the variant's field type.
                 let mut choice = #variant_field_type::default();
+                // Recursively read XML into that instance.
                 choice.read_xml(#variant_name_str, xml, #name_str, propagated_event)?;
+                // Update self to be the enum variant containing the populated field.
                 *self = #name::#variant_name(choice);
+                // Mark that a matching XML element was found.
                 chosen = true;
             }
         });
+        // Similarly, prepare a variant-specific code fragment for when an initial item in a collection is being parsed.
         initial_item_elements.push(quote! {
             Ok(Event::Empty(ref e)) | Ok(Event::Start(ref e)) if e.local_name().as_ref() == #variant_name_str.as_bytes() => {
                 propagated_event.replace(Ok(event.unwrap().into_owned()));
+                // Create and populate a default instance for this variant.
                 let mut choice = #variant_field_type::default();
                 choice.read_xml(#variant_name_str, xml, #name_str, propagated_event)?;
+                // Wrap the populated variant in the enum and set it as the current item.
                 let choice = #name::#variant_name(choice);
                 item = Some(choice);
                 chosen = true;
