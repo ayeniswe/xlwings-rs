@@ -148,11 +148,14 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
             }
         });
     }
+    //
     // OR
-    // Gather information if struct fields were found
+    //
+    // Optional metadata that can effect globally other fields
     let mut following_elements = false;
     let mut sequence = false;
     let mut next_sequence = None;
+    // Gather information if struct fields were found
     let mut fields = fields.iter().peekable();
     while let Some(field) = fields.next() {
         // Get peek so sequence elements are parsed correctly
@@ -171,28 +174,48 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
         let mut skip = false;
         let mut inner_value = false;
         for attr in &field.attrs {
+            // Determine how to handle the attribute based on its identifier.
             let result = if attr.path().is_ident("xml") {
+                // For attributes starting with #[xml(...)], parse their inner options.
                 attr.parse_nested_meta(|meta| {
+                    // If the option is "default_bool", parse it as a boolean literal.
                     if meta.path.is_ident("default_bool") {
                         let _ = meta.value()?.parse::<LitBool>()?.value();
-                    } else if meta.path.is_ident("default_bytes") {
+                    }
+                    // If the option is "default_bytes", parse it as a byte string literal.
+                    else if meta.path.is_ident("default_bytes") {
                         let _ = meta.value()?.parse::<LitByteStr>()?;
-                    } else if meta.path.is_ident("name") {
+                    }
+                    // If the option is "name", update the XML tag name accordingly.
+                    else if meta.path.is_ident("name") {
                         field_name_str = meta.value()?.parse::<LitStr>()?.value();
-                    } else if meta.path.is_ident("sequence") {
+                    }
+                    // If the option is "sequence", mark the field as part of a sequence to follow.
+                    else if meta.path.is_ident("sequence") {
                         sequence = true;
+                        // Peek ahead to the next field to set the closing tag for the sequence.
                         if let Some(f) = fields.peek() {
                             next_sequence = Some(f.ident.clone().unwrap().to_string());
                         }
-                    } else if meta.path.is_ident("skip") {
+                    }
+                    // If "skip" is specified, mark this field to be ignored.
+                    else if meta.path.is_ident("skip") {
                         skip = true;
-                    } else if meta.path.is_ident("val") {
+                    }
+                    // If "val" is specified, indicate that this field represents inner text.
+                    else if meta.path.is_ident("val") {
                         inner_value = true;
-                    } else if meta.path.is_ident("following_elements") {
+                    }
+                    // If "following_elements" is specified, set to account for following iteration fields to act as elements.
+                    else if meta.path.is_ident("following_elements") {
                         following_elements = true;
-                    } else if meta.path.is_ident("element") {
+                    }
+                    // If "element" is specified, mark the field to be read as an XML element.
+                    else if meta.path.is_ident("element") {
                         element = true;
-                    } else {
+                    }
+                    // Any unsupported option results in an error.
+                    else {
                         return Err(meta.error(format!(
                             "Unsupported `#[xml(...)]` option `{}`",
                             meta.path.clone().into_token_stream()
@@ -200,10 +223,12 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
                     }
                     Ok(())
                 })
-            } else if attr.path().is_ident("doc") {
-                // Ignore `#[doc]` attributes (doc comments)
+            }
+            // Ignore documentation attributes (#[doc]) as they don't affect processing.
+            else if attr.path().is_ident("doc") {
                 Ok(())
-            } else {
+            }
+            else {
                 Err(Error::new(
                     attr.span(),
                     format!(
@@ -212,13 +237,12 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
                     ),
                 ))
             };
-
             if let Err(e) = result {
                 panic!("Failed to parse: {}", e);
             }
         }
 
-        // Ignore fields marked with `#[xml(skip)]`
+        // Ignore field
         if skip {
             continue;
         }
