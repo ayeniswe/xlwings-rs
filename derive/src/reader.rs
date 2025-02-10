@@ -323,13 +323,16 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
                 });
             }
         } else if !element && !following_elements {
+            // For fields not marked as elements or following elements, generate attribute reading logic.
             let attr_read_logic = match &field.ty {
+                // Match on the field's type to generate type-specific parsing code.
                 syn::Type::Path(type_path) => {
                     let last_segment = type_path.path.segments.last().unwrap();
                     let field_name_as_bytes =
                         LitByteStr::new(field_name_str.as_bytes(), Span::call_site().into());
-
+                    // Check the field's type name to determine how to parse its XML attribute.
                     match last_segment.ident.to_string().as_str() {
+                        // For boolean fields, interpret common true representations.
                         "bool" => Ok((
                             quote! {
                                 #field_name_as_bytes => self.#field_name = *a.value == *b"1" || *a.value == *b"true" || *a.value == *b"on",
@@ -338,8 +341,8 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
                                 #field_name_as_bytes => item.#field_name = *a.value == *b"1" || *a.value == *b"true" || *a.value == *b"on",
                             },
                         )),
+                        // For Vec fields, expect a Vec<u8> that holds attribute data.
                         "Vec" => {
-                            // Handle Vec<u8> fields only for attributes
                             match &type_path.path.segments[0].arguments {
                                 syn::PathArguments::AngleBracketed(args) => {
                                     if let syn::GenericArgument::Type(inner_type) = &args.args[0] {
@@ -368,7 +371,7 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
                                             ),
                                         ))
                                     }
-                                }
+                                } 
                                 arg => Err(Error::new(
                                     arg.span(),
                                     format!(
@@ -378,14 +381,12 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
                                 )),
                             }
                         }
-
                         segement => Err(Error::new(
                             segement.span(),
                             format!("Unsupported struct field datatype `{}`", segement),
                         )),
                     }
                 }
-
                 r#type => Err(Error::new(
                     r#type.span(),
                     format!(
@@ -394,7 +395,7 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
                     ),
                 )),
             };
-
+            
             match attr_read_logic {
                 Ok(logic) => {
                     attributes.push(logic.0);
