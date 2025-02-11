@@ -197,13 +197,27 @@ pub fn derive_xml_writer(input: TokenStream) -> TokenStream {
 ///   #[derive(XmlRead)]
 ///   struct MyStruct {
 ///       #[xml(sequence)]
-///       item: String,
-///       item2: String,
-///       item3: String,
+///       item: Vec<SomeStruct>,
+///       item2: Vec<OtherStruct>,
+///       item3: Vec<NewStruct>,
 ///   }
 ///   ```
 /// - **Notes**:
 ///   - The field ignores the other attribute's options
+///
+/// ## `#[xml(val)]`
+/// - **Purpose**: Specifies that the field will be read as a value.
+/// - **Usage**: Applied to a single struct fields.
+/// - **Example**:
+///   ```rust
+///   #[derive(XmlRead)]
+///   struct MyStruct {
+///       #[xml(value)]
+///       item: Vec<u8>,
+///   }
+///   ```
+/// - **Notes**:
+///   - Only a single field can have this attribute
 ///
 /// # Examples
 ///

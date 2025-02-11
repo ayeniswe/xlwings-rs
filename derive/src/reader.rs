@@ -12,7 +12,7 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
     let name = &input.ident;
     // Convert the identifier into a mutable string, allowing for later customization via attributes.
     let mut name_str = name.to_string();
-    
+
     // Gather top-level metadata from the struct’s attributes.
     for attr in input.attrs {
         // Check and parse attributes based on their identifier.
@@ -47,7 +47,7 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
     }
 
     // Gather all struct fields
-    let mut fields: &Punctuated<Field, Comma> = &Punctuated::new();
+    let mut fields = &Punctuated::new();
     if let Data::Struct(data_struct) = &input.data {
         match &data_struct.fields {
             Fields::Named(f) => fields = &f.named,
@@ -178,19 +178,19 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
             let result = if attr.path().is_ident("xml") {
                 // For attributes starting with #[xml(...)], parse their inner options.
                 attr.parse_nested_meta(|meta| {
-                    // If the option is "default_bool", parse it as a boolean literal.
+                    // Only include for compatibility with XmlWriter trait
                     if meta.path.is_ident("default_bool") {
                         let _ = meta.value()?.parse::<LitBool>()?.value();
                     }
-                    // If the option is "default_bytes", parse it as a byte string literal.
+                    // Only include for compatibility with XmlWriter trait
                     else if meta.path.is_ident("default_bytes") {
                         let _ = meta.value()?.parse::<LitByteStr>()?;
                     }
-                    // If the option is "name", update the XML tag name accordingly.
+                    // Update the XML tag name accordingly.
                     else if meta.path.is_ident("name") {
                         field_name_str = meta.value()?.parse::<LitStr>()?.value();
                     }
-                    // If the option is "sequence", mark the field as part of a sequence to follow.
+                    // Mark the field as part of a sequence to follow.
                     else if meta.path.is_ident("sequence") {
                         sequence = true;
                         // Peek ahead to the next field to set the closing tag for the sequence.
@@ -198,23 +198,22 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
                             next_sequence = Some(f.ident.clone().unwrap().to_string());
                         }
                     }
-                    // If "skip" is specified, mark this field to be ignored.
+                    // Mark this field to be ignored.
                     else if meta.path.is_ident("skip") {
                         skip = true;
                     }
-                    // If "val" is specified, indicate that this field represents inner text.
+                    // Indicate that this field represents inner text.
                     else if meta.path.is_ident("val") {
                         inner_value = true;
                     }
-                    // If "following_elements" is specified, set to account for following iteration fields to act as elements.
+                    // Set to account for following iteration fields to act as elements.
                     else if meta.path.is_ident("following_elements") {
                         following_elements = true;
                     }
-                    // If "element" is specified, mark the field to be read as an XML element.
+                    // Mark the field to be read as an XML element.
                     else if meta.path.is_ident("element") {
                         element = true;
                     }
-                    // Any unsupported option results in an error.
                     else {
                         return Err(meta.error(format!(
                             "Unsupported `#[xml(...)]` option `{}`",
@@ -227,8 +226,7 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
             // Ignore documentation attributes (#[doc]) as they don't affect processing.
             else if attr.path().is_ident("doc") {
                 Ok(())
-            }
-            else {
+            } else {
                 Err(Error::new(
                     attr.span(),
                     format!(
@@ -252,48 +250,37 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
             // Validate that the field’s type is supported for inner text extraction.
             // This branch specifically only accepts a Vec<u8> type.
             let result = match &field.ty {
-                syn::Type::Path(type_path) => {
-                    match &type_path.path.segments[0].arguments {
-                        syn::PathArguments::AngleBracketed(inner) => {
-                            match &inner.args[0] {
-                                syn::GenericArgument::Type(inner_type) => {
-                                    if inner_type.to_token_stream().to_string() == "u8" {
-                                        Ok(())
-                                    } else {
-                                        Err(Error::new(
+                syn::Type::Path(type_path) => match &type_path.path.segments[0].arguments {
+                    syn::PathArguments::AngleBracketed(inner) => match &inner.args[0] {
+                        syn::GenericArgument::Type(inner_type) => {
+                            if inner_type.to_token_stream().to_string() == "u8" {
+                                Ok(())
+                            } else {
+                                Err(Error::new(
                                             inner_type.span(),
                                             "Only Vec<u8> is supported for inner value. Specify `#[xml(element)]` if you want to serialize it as an element",
                                         ))
-                                    }
-                                }
-                                args => {
-                                    Err(Error::new(
-                                        args.span(),
-                                        format!(
-                                            "Unsupported angle bracket args `{}` for inner value",
-                                            args.into_token_stream()
-                                        ),
-                                    ))
-                                }
                             }
                         }
-                        arg => {
-                            Err(Error::new(
-                                arg.span(),
-                                format!(
-                                    "Unsupported type path args `{}` for inner value",
-                                    arg.into_token_stream()
-                                ),
-                            ))
-                        }
-                    }
-                }
+                        args => Err(Error::new(
+                            args.span(),
+                            format!(
+                                "Unsupported angle bracket args `{}` for inner value",
+                                args.into_token_stream()
+                            ),
+                        )),
+                    },
+                    arg => Err(Error::new(
+                        arg.span(),
+                        format!(
+                            "Unsupported type path args `{}` for inner value",
+                            arg.into_token_stream()
+                        ),
+                    )),
+                },
                 ty => Err(Error::new(
                     ty.span(),
-                    format!(
-                        "Unsupported field type path `{}`",
-                        ty.into_token_stream()
-                    ),
+                    format!("Unsupported field type path `{}`", ty.into_token_stream()),
                 )),
             };
 
@@ -343,45 +330,43 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
                             },
                         )),
                         // For Vec fields, expect a Vec<u8> that holds attribute data.
-                        "Vec" => {
-                            match &type_path.path.segments[0].arguments {
-                                syn::PathArguments::AngleBracketed(args) => {
-                                    if let syn::GenericArgument::Type(inner_type) = &args.args[0] {
-                                        if inner_type.to_token_stream().to_string() == "u8" {
-                                            Ok((
-                                                quote! {
-                                                    #field_name_as_bytes => self.#field_name = a.value.into(),
-                                                },
-                                                quote! {
-                                                    #field_name_as_bytes => item.#field_name = a.value.into(),
-                                                },
-                                            ))
-                                        } else {
-                                            Err(Error::new(
+                        "Vec" => match &type_path.path.segments[0].arguments {
+                            syn::PathArguments::AngleBracketed(args) => {
+                                if let syn::GenericArgument::Type(inner_type) = &args.args[0] {
+                                    if inner_type.to_token_stream().to_string() == "u8" {
+                                        Ok((
+                                            quote! {
+                                                #field_name_as_bytes => self.#field_name = a.value.into(),
+                                            },
+                                            quote! {
+                                                #field_name_as_bytes => item.#field_name = a.value.into(),
+                                            },
+                                        ))
+                                    } else {
+                                        Err(Error::new(
                                                 inner_type.span(),
                                                 "Only Vec<u8> is supported for attribute. Specify `#[xml(element)]` if you want to serialize it as an element",
                                             ))
-                                        }
-                                    } else {
-                                        let generic = &args.args[0];
-                                        Err(Error::new(
-                                            generic.span(),
-                                            format!(
-                                                "Unsupported Vec inner type `{}` for attribute",
-                                                generic.into_token_stream()
-                                            ),
-                                        ))
                                     }
-                                } 
-                                arg => Err(Error::new(
-                                    arg.span(),
-                                    format!(
-                                        "Unsupported Vec type `{}` for attribute",
-                                        arg.into_token_stream()
-                                    ),
-                                )),
+                                } else {
+                                    let generic = &args.args[0];
+                                    Err(Error::new(
+                                        generic.span(),
+                                        format!(
+                                            "Unsupported Vec inner type `{}` for attribute",
+                                            generic.into_token_stream()
+                                        ),
+                                    ))
+                                }
                             }
-                        }
+                            arg => Err(Error::new(
+                                arg.span(),
+                                format!(
+                                    "Unsupported Vec type `{}` for attribute",
+                                    arg.into_token_stream()
+                                ),
+                            )),
+                        },
                         segement => Err(Error::new(
                             segement.span(),
                             format!("Unsupported struct field datatype `{}`", segement),
@@ -396,7 +381,7 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
                     ),
                 )),
             };
-            
+
             match attr_read_logic {
                 Ok(logic) => {
                     attributes.push(logic.0);
@@ -410,6 +395,9 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
                     let last_segment = type_path.path.segments.last().unwrap();
                     let field_type = last_segment.ident.clone();
 
+                    // Only when considering vectory is there a need to dynamically choose correct closing tag
+                    // since we can have sequential data or multiple items that need to be broken out at a specfic closing
+                    // tag othwerise endless loop unfolds
                     match field_type.to_string().as_str() {
                         "Option" => Ok((
                             quote! {
@@ -454,21 +442,19 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
                                         #field_name = true;
                                     }
                                 },
-                                // Validating the presence of the field
                                 quote! {
                                     if !#field_name {
                                         panic!("Missing required field `{}`", #field_name_str);
                                     }
                                 },
-                                // Intializing validation
                                 quote! {
                                     let mut #field_name = false;
                                 },
                             ))
                         }
+                        // No closing tag is needed since we arent dealing with sequences or arrays
                         _ => Ok((
                             quote! {
-                                // no need to worry about closing tags
                                 Ok(Event::Empty(ref e)) | Ok(Event::Start(ref e)) if e.local_name().as_ref() == #field_name_str.as_bytes() => {
                                     propagated_event.replace(Ok(event.unwrap().into_owned()));
                                     self.#field_name.read_xml(#field_name_str, xml, #name_str, propagated_event)?;
@@ -476,20 +462,17 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
                                 }
                             },
                             quote! {
-                                // no need to worry about closing tags
                                 Ok(Event::Empty(ref e)) | Ok(Event::Start(ref e)) if e.local_name().as_ref() == #field_name_str.as_bytes() => {
                                     propagated_event.replace(Ok(event.unwrap().into_owned()));
                                     item.#field_name.read_xml(#field_name_str, xml, #name_str, propagated_event)?;
                                     #field_name = true;
                                 }
                             },
-                            // Validating the presence of the field
                             quote! {
                                 if !#field_name {
                                     panic!("Missing required field `{}`", #field_name_str);
                                 }
                             },
-                            // Intializing validation
                             quote! {
                                 let mut #field_name = false;
                             },
@@ -518,11 +501,13 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
         }
     }
 
-    // An element needs to be init to use in Vec and Option situations
+    // An element needs to be initialize to use in Vec and Option situations
     let mut init_element = quote! {};
-    // For Vec need to safely unwrap since checks are already done to gurantee
+    // For Vec need to safely unwrap since checks are already done before
+    // reaching this point
     let mut add_vec_element = quote! {};
-    // For option some are already cast to a option
+    // For option where enum variants or struct fields are dealt with we
+    // need to handle them separately
     let mut set_opt_element = quote! {};
 
     // For enum variants
@@ -548,8 +533,8 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
         set_opt_element = quote! { self.replace(item);};
     }
 
+    // Generate the implementation for the `XmlReader` trait for the struct
     let expanded =
-        // Generate the implementation for the `XmlReader` trait for the struct
         quote! {
             impl<B: BufRead> XmlReader<B> for Vec<#name> {
                 fn read_xml<'a>(&mut self, tag_name: &'a str, xml: &'a mut Reader<B>, closing_name: &'a str, propagated_event: &'a mut Option<Result<Event<'static>, quick_xml::Error>>)
@@ -557,8 +542,13 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
                     // Keep memory usage to a minimum
                     let mut buf = Vec::with_capacity(1024);
                     loop {
+                        // Initialize a instance of object to add to collection
                         #init_element
+                        // Save memory usage 
                         buf.clear();
+                        // Since we consume events to also break out loops
+                        // we need to be able reread whenever we breakout si we
+                        // do not miss out on data
                         let event = if let Some(e) = propagated_event.take() {
                             e
                         } else {
@@ -578,6 +568,7 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
                                 // Read the nested tag contents
                                 if let Ok(Event::Start(_)) = event {
                                     let mut nested_buf = Vec::with_capacity(1024);
+                                    // Set flags to verify
                                     #(#init_check_elements)*
                                     loop {
                                         nested_buf.clear();
@@ -600,8 +591,10 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
                                             _ => (),
                                         }
                                     }
+                                    // Verify flag fields that are required are seen
                                     #(#check_elements)*
                                 }
+                                // Update collection with new instance
                                 #add_vec_element
                             }
                             Ok(Event::Empty(ref e)) | Ok(Event::Start(ref e)) if e.local_name().as_ref() == closing_name.as_bytes() => {
@@ -628,7 +621,6 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
                     closing_name: &'a str,
                     propagated_event: &'a mut Option<Result<Event<'static>, quick_xml::Error>>
                 ) -> Result<(), XlsxError> {
-                    // Keep memory usage to a minimum
                     let mut buf = Vec::with_capacity(1024);
                     loop {
                         buf.clear();
@@ -639,7 +631,6 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
                         };
                         match event {
                             Ok(Event::Empty(ref e)) | Ok(Event::Start(ref e)) if e.local_name().as_ref() == tag_name.as_bytes() => {
-                                // Read the tag attributes
                                 for attr in e.attributes() {
                                     if let Ok(a) = attr {
                                         match a.key.as_ref() {
@@ -648,7 +639,6 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
                                         }
                                     }
                                 }
-                                // Read the nested tag contents
                                 if let Ok(Event::Start(_)) = event {
                                     let mut nested_buf = Vec::with_capacity(1024);
                                     #(#init_check_elements)*
@@ -695,7 +685,6 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
                     propagated_event: &'a mut Option<Result<Event<'static>, quick_xml::Error>>
                 ) -> Result<(), XlsxError> {
                     #init_element
-                    // Keep memory usage to a minimum
                     let mut buf = Vec::with_capacity(1024);
                     loop {
                         buf.clear();
@@ -706,7 +695,6 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
                         };
                         match event {
                             Ok(Event::Empty(ref e)) | Ok(Event::Start(ref e)) if e.local_name().as_ref() == tag_name.as_bytes() => {
-                                // Read the tag attributes
                                 for attr in e.attributes() {
                                     if let Ok(a) = attr {
                                         match a.key.as_ref() {
@@ -716,7 +704,6 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
                                     }
                                 }
 
-                                // Read the nested tag contents
                                 if let Ok(Event::Start(_)) = event {
                                     let mut nested_buf = Vec::with_capacity(1024);
                                     #(#init_check_elements)*
@@ -743,6 +730,7 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
                                     }
                                     #(#check_elements)*
                                 }
+                                // To capture the optional actual data found
                                 #set_opt_element
                                 break
                             }
