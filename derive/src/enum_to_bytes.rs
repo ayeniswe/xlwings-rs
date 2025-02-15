@@ -1,6 +1,6 @@
 use proc_macro::{Span, TokenStream};
 use quote::quote;
-use syn::{parse_macro_input, DeriveInput, Ident, LitByteStr};
+use syn::{parse_macro_input, DeriveInput, Data, Error, Ident, LitByteStr, LitStr};
 
 fn to_camel_case(value: String) -> String {
     let mut chars = value.chars();
@@ -37,7 +37,7 @@ pub fn impl_enum_to_bytes(input: TokenStream) -> TokenStream {
     
     // Extract enum variants
     let data = match input.data {
-        syn::Data::Enum(data) => data,
+        Data::Enum(data) => data,
         _ => panic!("EnumToBytes can only be derived for enums"),
     };
 
@@ -59,7 +59,7 @@ pub fn impl_enum_to_bytes(input: TokenStream) -> TokenStream {
         // Prevent using both rename and camelcase
         if rename.is_some() && (camel_case || global_camel_case) {
             return (
-                syn::Error::new_spanned(variant, "Cannot use both 'rename' and 'camelcase' attributes").to_compile_error(),
+                Error::new_spanned(variant, "Cannot use both 'rename' and 'camelcase' attributes").to_compile_error(),
                 quote! {}
             );
         }
