@@ -43,7 +43,7 @@ use std::io::{BufRead, Write};
 /// - `GregorianArabic`: Represents the Arabic variant of the Gregorian calendar.
 /// - `GregorianXlitEnglish`: Represents the English transliterated Gregorian calendar.
 /// - `GregorianXlitFrench`: Represents the French transliterated Gregorian calendar.
-#[derive(Debug, Default, Clone, PartialEq)]
+#[derive(Debug, Default, Clone, PartialEq, EnumToBytes)]
 pub enum STCalendarType {
     #[default]
     None,
@@ -59,30 +59,6 @@ pub enum STCalendarType {
     GregorianArabic,
     GregorianXlitEnglish,
     GregorianXlitFrench,
-}
-impl TryFrom<Vec<u8>> for STCalendarType {
-    type Error = XlsxError;
-    fn try_from(value: Vec<u8>) -> Result<Self, Self::Error> {
-        match value.as_slice() {
-            b"none" => Ok(STCalendarType::None),
-            b"gregorian" => Ok(STCalendarType::Gregorian),
-            b"gregorianUs" => Ok(STCalendarType::GregorianUs),
-            b"japan" => Ok(STCalendarType::Japan),
-            b"taiwan" => Ok(STCalendarType::Taiwan),
-            b"korea" => Ok(STCalendarType::Korea),
-            b"hijri" => Ok(STCalendarType::Hijri),
-            b"thai" => Ok(STCalendarType::Thai),
-            b"hebrew" => Ok(STCalendarType::Hebrew),
-            b"gregorianMeFrench" => Ok(STCalendarType::GregorianMeFrench),
-            b"gregorianArabic" => Ok(STCalendarType::GregorianArabic),
-            b"gregorianXlitEnglish" => Ok(STCalendarType::GregorianXlitEnglish),
-            b"gregorianXlitFrench" => Ok(STCalendarType::GregorianXlitFrench),
-            v => {
-                let value = String::from_utf8_lossy(v);
-                Err(XlsxError::MissingVariant("STCalendarType".into(), value.into()))
-            }
-        }
-    }
 }
 /// Represents the valid date-time grouping options.
 ///
@@ -110,7 +86,7 @@ impl TryFrom<Vec<u8>> for STCalendarType {
 /// - `Hour`: Represents grouping by hour.
 /// - `Minute`: Represents grouping by minute.
 /// - `Second`: Represents grouping by second.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, EnumToBytes)]
 pub enum STDateTimeGrouping {
     Year,
     Month,
@@ -118,38 +94,6 @@ pub enum STDateTimeGrouping {
     Hour,
     Minute,
     Second,
-}
-impl TryFrom<Vec<u8>> for STDateTimeGrouping {
-    type Error = XlsxError;
-    fn try_from(value: Vec<u8>) -> Result<Self, Self::Error> {
-        match value.as_slice() {
-            b"year" => Ok(STDateTimeGrouping::Year),
-            b"month" => Ok(STDateTimeGrouping::Month),
-            b"day" => Ok(STDateTimeGrouping::Day),
-            b"hour" => Ok(STDateTimeGrouping::Hour),
-            b"minute" => Ok(STDateTimeGrouping::Minute),
-            b"second" => Ok(STDateTimeGrouping::Second),
-            v => {
-                let value = String::from_utf8_lossy(v.into());
-                Err(XlsxError::MissingVariant(
-                    "STDateTimeGrouping".into(),
-                    value.into(),
-                ))
-            }
-        }
-    }
-}
-impl From<STDateTimeGrouping> for Vec<u8> {
-    fn from(value: STDateTimeGrouping) -> Self {
-        match value {
-            STDateTimeGrouping::Year => b"year".to_vec(),
-            STDateTimeGrouping::Month => b"month".to_vec(),
-            STDateTimeGrouping::Day => b"day".to_vec(),
-            STDateTimeGrouping::Hour => b"hour".to_vec(),
-            STDateTimeGrouping::Minute => b"minute".to_vec(),
-            STDateTimeGrouping::Second => b"second".to_vec(),
-        }
-    }
 }
 /// Represents a date and time group item.
 ///
@@ -178,22 +122,26 @@ impl From<STDateTimeGrouping> for Vec<u8> {
 /// - `second`: The second part of the time.
 /// - `date_time_grouping`: How the date and time are grouped.
 #[derive(Debug, Default, Clone, PartialEq, XmlRead, XmlWrite)]
-struct CTDateGroupItem {
+pub(crate) struct CTDateGroupItem {
     year: Vec<u8>,
-    month: Vec<u8>,
-    day: Vec<u8>,
-    hour: Vec<u8>,
-    minute: Vec<u8>,
-    second: Vec<u8>,
+    month: Option<Vec<u8>>,
+    day: Option<Vec<u8>>,
+    hour: Option<Vec<u8>>,
+    minute: Option<Vec<u8>>,
+    second: Option<Vec<u8>>,
     date_time_grouping: Vec<u8>,
 }
 impl CTDateGroupItem {
     /// Creates a new `CT_DateGroupItem` with XML schema default values.
-    fn new(year: u16, date_time_grouping: STDateTimeGrouping) -> Self {
+    pub fn new(year: u16, month: u8, day: u8, hour: u8, minute: u8, second: u16, date_time_grouping: STDateTimeGrouping) -> Self {
         Self {
+            month: month.to_string().into(),
+            day: day.to_string().into(),
+            hour: hour.to_string().into(),
+            minute: minute.to_string().into(),
+            second: second.to_string().into(),
             year: year.to_string().into(),
-            // date_time_grouping: date_time_grouping.,
-            ..Default::default()
+            date_time_grouping: date_time_grouping.into()
         }
     }
 }
@@ -212,22 +160,21 @@ impl CTDateGroupItem {
 /// # Fields
 /// - `val`: The value of the filter (a string).
 #[derive(Debug, Default, Clone, PartialEq, XmlRead, XmlWrite)]
-struct CTFilter {
+pub(crate) struct CTFilter {
     val: Vec<u8>,
 }
 impl CTFilter {
     /// Creates a new `CT_Filter`  with XML schema default values.
-    fn new() -> Self {
+    pub fn new(val: &str) -> Self {
         Self {
-            ..Default::default()
+            val: val.into()
         }
     }
 }
 /// Represents a collection of filters and date group items.
 ///
 /// This struct corresponds to the `CT_Filters` complex type in the XML schema.
-/// It holds both regular filters and date-related group items, along with attributes
-/// for `blank` and `calendarType`.
+/// It holds both regular filters and date-related group items
 ///
 /// # XML Schema Mapping
 /// ```xml
@@ -247,19 +194,23 @@ impl CTFilter {
 /// - `blank`: A boolean indicating whether the blank option is enabled.
 /// - `calendar_type`: The type of calendar used.
 #[derive(Debug, Default, Clone, PartialEq, XmlRead, XmlWrite)]
-struct CTFilters {
-    blank: bool,
-    calendar_type: Vec<u8>,
-    #[xml(following_elements)]
+pub(crate) struct CTFilters {
+    #[xml(default_bool = false)]
+    blank: Option<bool>,
+    #[xml(default_bytes = b"none")]
+    calendar_type: Option<Vec<u8>>,
+    #[xml(following_elements, sequence)]
     filters: Vec<CTFilter>,
     date_group_items: Vec<CTDateGroupItem>,
 }
 impl CTFilters {
     /// Creates a new `CT_Filters` instance with XML schema default values.
-    fn new() -> Self {
+    pub fn new(blank: Option<bool>, calendar_type: Option<STCalendarType>, filters: Option<Vec<CTFilter>>, date_group_items: Option<Vec<CTDateGroupItem>>) -> Self {
         Self {
-            calendar_type: b"none".into(),
-            ..Default::default()
+            blank: blank.unwrap_or(Some(false)),
+            filters: filters.unwrap_or(Vec::new()),
+            date_group_items: date_group_items.unwrap_or(Vec::new()),
+            calendar_type: calendar_type.unwrap_or(STCalendarType::None).into(),
         }
     }
 }
@@ -281,14 +232,15 @@ impl CTFilters {
 /// - `icon_id`: An optional icon ID within the icon set.
 #[derive(Debug, Default, Clone, PartialEq, XmlRead, XmlWrite)]
 pub(crate) struct CTIconFilter {
-    pub(crate) icon_set: Vec<u8>,
-    pub(crate) icon_id: Vec<u8>,
+    icon_set: Vec<u8>,
+    icon_id: Option<Vec<u8>>,
 }
 impl CTIconFilter {
     /// Creates a new `CT_IconFilter` with XML schema default values.
-    pub(crate) fn new() -> Self {
+    pub fn new(icon_id: Option<Vec<u8>>, icon_set: STIconSetType) -> Self {
         Self {
-            ..Default::default()
+            icon_id,
+            icon_set: icon_set.into(),
         }
     }
 }
@@ -783,58 +735,44 @@ impl TryFrom<Vec<u8>> for STSortBy {
 /// - `FiveArrows`: Represents a set of 5 arrows for conditional formatting.
 /// - `FiveTrafficLights`: Represents a set of 5 traffic lights for conditional formatting.
 /// - `FiveQuarters`: Represents a set of 5 quarters for conditional formatting.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, EnumToBytes)]
 pub enum STIconSetType {
     /// Represents a set of 3 arrows used for conditional formatting.
+    #[b(name = "3Arrows")]
     ThreeArrows,
     /// Represents a set of 3 flags for conditional formatting.
+    #[b(name = "3Flags")]
     ThreeFlags,
     /// Represents a set of 3 traffic lights (set 1) for conditional formatting.
+    #[b(name = "3TrafficLights1")]
     ThreeTrafficLights1,
     /// Represents a set of 3 traffic lights (set 2) for conditional formatting.
+    #[b(name = "3TrafficLights2")]
     ThreeTrafficLights2,
     /// Represents a set of 3 signs for conditional formatting.
+    #[b(name = "3Signs")]
     ThreeSigns,
     /// Represents a set of 3 symbols for conditional formatting.
+    #[b(name = "3Symbols")]
     ThreeSymbols,
     /// Represents a different set of 3 symbols for conditional formatting.
+    #[b(name = "3Symbols2")]
     ThreeSymbols2,
     /// Represents a set of 4 arrows for conditional formatting.
+    #[b(name = "4Arrows")]
     FourArrows,
     /// Represents a set of 4 traffic lights for conditional formatting.
+    #[b(name = "4TrafficLights")]
     FourTrafficLights,
     /// Represents a set of 5 arrows for conditional formatting.
+    #[b(name = "5Arrows")]
     FiveArrows,
     /// Represents a set of 5 traffic lights for conditional formatting.
+    #[b(name = "5TrafficLights")]
     FiveTrafficLights,
     /// Represents a set of 5 quarters for conditional formatting.
+    #[b(name = "5Quarters")]
     FiveQuarters,
-}
-impl TryFrom<Vec<u8>> for STIconSetType {
-    type Error = XlsxError;
-    fn try_from(value: Vec<u8>) -> Result<Self, Self::Error> {
-        match value.as_slice() {
-            b"3Arrows" => Ok(STIconSetType::ThreeArrows),
-            b"3Flags" => Ok(STIconSetType::ThreeFlags),
-            b"3TrafficLights1" => Ok(STIconSetType::ThreeTrafficLights1),
-            b"3TrafficLights2" => Ok(STIconSetType::ThreeTrafficLights2),
-            b"3Signs" => Ok(STIconSetType::ThreeSigns),
-            b"3Symbols" => Ok(STIconSetType::ThreeSymbols),
-            b"3Symbols2" => Ok(STIconSetType::ThreeSymbols2),
-            b"4Arrows" => Ok(STIconSetType::FourArrows),
-            b"4TrafficLights" => Ok(STIconSetType::FourTrafficLights),
-            b"5Arrows" => Ok(STIconSetType::FiveArrows),
-            b"5TrafficLights" => Ok(STIconSetType::FiveTrafficLights),
-            b"5Quarters" => Ok(STIconSetType::FiveQuarters),
-            v => {
-                let value = String::from_utf8_lossy(v);
-                Err(XlsxError::MissingVariant(
-                    "STIconSetType".into(),
-                    value.into(),
-                ))
-            }
-        }
-    }
 }
 /// Represents the condition for sorting in a document.
 ///
