@@ -214,28 +214,39 @@ pub fn impl_xml_writer(input: TokenStream) -> TokenStream {
                     let last_segment = type_path.path.segments.last().unwrap();
                     match last_segment.ident.to_string().as_str() {
                         "bool" => {
-                            let logic = if let Some(default_bool) = default_bool {
-                                quote! {
+                            if let Some(default_bool) = default_bool {
+                                Ok(quote! {
                                     if self.#field_name != #default_bool {
                                         let value = if self.#field_name { b"1" } else { b"0" };
                                         attrs.push((#field_name_str.as_bytes(), value.as_ref()));
                                     }
-                                }
+                                })
                             } else {
-                                quote! {
+                                Ok(quote! {
                                     let value = if self.#field_name { b"1" } else { b"0" };
                                     attrs.push((#field_name_str.as_bytes(), value.as_ref()));
-                                }
-                            };
-                            Ok(logic)
+                                })
+                            }
                         }
                         "Vec" => {
                             // Handle Vec<u8> fields only for attributes
-                            let inner_type = match &type_path.path.segments[0].arguments {
+                            match &type_path.path.segments[0].arguments {
                                 syn::PathArguments::AngleBracketed(args) => {
                                     if let syn::GenericArgument::Type(inner_type) = &args.args[0] {
                                         if inner_type.to_token_stream().to_string() == "u8" {
-                                            Ok(())
+                                            if let Some(default_bytes) = default_bytes {
+                                                Ok(quote! {
+                                                    if self.#field_name != #default_bytes {
+                                                        attrs.push((#field_name_str.as_bytes(), self.#field_name.as_ref()));;
+                                                    }
+                                                })
+                                            } else {
+                                                Ok(quote! {
+                                                    if !self.#field_name.is_empty() {
+                                                        attrs.push((#field_name_str.as_bytes(), self.#field_name.as_ref()));;
+                                                    }
+                                                })
+                                            }
                                         } else {
                                             Err(Error::new(
                                             inner_type.span(),
@@ -256,29 +267,77 @@ pub fn impl_xml_writer(input: TokenStream) -> TokenStream {
                                 arg => Err(Error::new(
                                     arg.span(),
                                     format!(
-                                        "Unsupported Vec type `{}` for attribute",
+                                        "Unsupported path type `{}` for Vec attribute",
                                         arg.into_token_stream()
                                     ),
                                 )),
-                            };
-                            match inner_type {
-                                Ok(_) => {
-                                    let logic = if let Some(default_bytes) = default_bytes {
-                                        quote! {
-                                            if self.#field_name != #default_bytes {
-                                                attrs.push((#field_name_str.as_bytes(), self.#field_name.as_ref()));;
+                            }
+                        }
+                        "Option" => {
+                            // Handle Vec<u8> fields only for attributes
+                            match &type_path.path.segments[0].arguments {
+                                syn::PathArguments::AngleBracketed(args) => {
+                                    if let syn::GenericArgument::Type(inner_type) = &args.args[0] {
+                                        let inner = inner_type.to_token_stream().to_string();
+
+                                        if inner == "Vec < u8 >" {
+                                            if let Some(default_bytes) = default_bytes {
+                                                Ok(quote! {
+                                                    if let Some(value) = &self.#field_name {
+                                                        if value != #default_bytes {
+                                                            attrs.push((#field_name_str.as_bytes(), value.as_ref()));
+                                                        }
+                                                    }
+                                                })
+                                            } else {
+                                                Ok(quote! {
+                                                    if let Some(value) = &self.#field_name {
+                                                        attrs.push((#field_name_str.as_bytes(), value.as_ref()));
+                                                    }
+                                                })
                                             }
+                                        } else if inner == "bool" {
+                                            if let Some(default_bool) = default_bool {
+                                                Ok(quote! {
+                                                    if let Some(value) = &self.#field_name {
+                                                        if value != #default_bool {
+                                                            attrs.push((#field_name_str.as_bytes(), value.as_ref()));
+                                                        }
+                                                    }
+                                                })
+                                            } else {
+                                                Ok(quote! {
+                                                    if let Some(value) = &self.#field_name {
+                                                        let value = if *value { b"1" } else { b"0" };
+                                                        attrs.push((#field_name_str.as_bytes(), value.as_ref()));
+                                                    }
+                                                })
+                                            }
+                                        } else {
+                                            Err(Error::new(
+                                                inner_type.span(),
+                                                format!("Unsupported inner type `{}` for Optional attribute, only `Vec<u8>` or `bool` is supported. Specify `#[xml(element)]` if you want to serialize it as an element",
+                                            inner_type.into_token_stream()),
+                                            ))
                                         }
                                     } else {
-                                        quote! {
-                                            if !self.#field_name.is_empty() {
-                                                attrs.push((#field_name_str.as_bytes(), self.#field_name.as_ref()));;
-                                            }
-                                        }
-                                    };
-                                    Ok(logic)
+                                        let generic = &args.args[0];
+                                        Err(Error::new(
+                                            generic.span(),
+                                            format!(
+                                                "Unsupported Optional inner type `{}` for attribute",
+                                                generic.into_token_stream()
+                                            ),
+                                        ))
+                                    }
                                 }
-                                Err(e) => Err(e),
+                                arg => Err(Error::new(
+                                    arg.span(),
+                                    format!(
+                                        "Unsupported path type `{}` for optional attribute",
+                                        arg.into_token_stream()
+                                    ),
+                                )),
                             }
                         }
                         segement => Err(Error::new(

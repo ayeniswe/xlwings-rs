@@ -7,6 +7,62 @@ mod xml_writer_derive {
     use std::io::Write;
 
     #[test]
+    fn test_xml_write_optional_bool_attribute() {
+        #[derive(XmlWrite)]
+        struct Example {
+            help: Option<bool>,
+        }
+
+        let sheet = Example { help: Some(true) };
+
+        let mut buffer = Cursor::new(Vec::new());
+        let mut writer = Writer::new(&mut buffer);
+        let _ = sheet.write_xml(&mut writer, "sheet");
+
+        let xml_output = String::from_utf8(buffer.into_inner()).unwrap();
+        let expected_output = r#"<sheet help="1"/>"#;
+        assert_eq!(xml_output, expected_output);
+
+        let sheet = Example { help: None };
+
+        let mut buffer = Cursor::new(Vec::new());
+        let mut writer = Writer::new(&mut buffer);
+        let _ = sheet.write_xml(&mut writer, "sheet");
+
+        let xml_output = String::from_utf8(buffer.into_inner()).unwrap();
+        let expected_output = r#"<sheet/>"#;
+        assert_eq!(xml_output, expected_output);
+    }
+    #[test]
+    fn test_xml_write_optional_byte_attribute() {
+        #[derive(XmlWrite)]
+        struct Example {
+            help: Option<Vec<u8>>,
+        }
+
+        let sheet = Example {
+            help: Some("DO NOT SHOW".into()),
+        };
+
+        let mut buffer = Cursor::new(Vec::new());
+        let mut writer = Writer::new(&mut buffer);
+        let _ = sheet.write_xml(&mut writer, "sheet");
+
+        let xml_output = String::from_utf8(buffer.into_inner()).unwrap();
+        let expected_output = r#"<sheet help="DO NOT SHOW"/>"#;
+        assert_eq!(xml_output, expected_output);
+
+        let sheet = Example { help: None };
+
+        let mut buffer = Cursor::new(Vec::new());
+        let mut writer = Writer::new(&mut buffer);
+        let _ = sheet.write_xml(&mut writer, "sheet");
+
+        let xml_output = String::from_utf8(buffer.into_inner()).unwrap();
+        let expected_output = r#"<sheet/>"#;
+        assert_eq!(xml_output, expected_output);
+    }
+    #[test]
     fn test_xml_write_skip() {
         #[derive(XmlWrite)]
         struct Example {
@@ -131,13 +187,6 @@ mod xml_reader_derive {
     use quick_xml::{events::Event, Reader};
     use std::io::{BufRead, Cursor};
 
-    #[derive(XmlRead, Default, PartialEq, Eq, Debug)]
-    struct Example {
-        active_pane: bool,
-        #[xml(val)]
-        inner: Vec<u8>,
-    }
-
     #[test]
     fn test_xml_reader_inner_text() {
         #[derive(XmlRead, Default, PartialEq, Eq, Debug)]
@@ -186,6 +235,48 @@ mod xml_reader_derive {
                 window: b"hello".to_vec()
             }
         );
+    }
+    #[test]
+    fn test_xml_reader_optional_attributes() {
+        #[derive(XmlRead, Default, PartialEq, Eq, Debug)]
+        struct Example {
+            active_pane: Option<bool>,
+            window: Option<Vec<u8>>,
+        }
+        let xml_content = r#"
+        <Example active_pane="1" window="hello" />"#;
+        let mut xml = Reader::from_reader(Cursor::new(xml_content));
+        let mut example = Example {
+            ..Default::default()
+        };
+        example
+            .read_xml("Example", &mut xml, "Example", &mut None)
+            .unwrap();
+        assert_eq!(
+            example,
+            Example {
+                active_pane: Some(true),
+                window: Some(b"hello".to_vec())
+            }
+        );
+    }
+    #[test]
+    #[should_panic(expected = "Missing required attribute `active_pane`")]
+    fn test_xml_reader_required_attributes() {
+        #[derive(XmlRead, Default, PartialEq, Eq, Debug)]
+        struct Example {
+            active_pane: bool,
+            window: Option<Vec<u8>>,
+        }
+        let xml_content = r#"
+        <Example window="hello" />"#;
+        let mut xml = Reader::from_reader(Cursor::new(xml_content));
+        let mut example = Example {
+            ..Default::default()
+        };
+        example
+            .read_xml("Example", &mut xml, "Example", &mut None)
+            .unwrap();
     }
     #[test]
     fn test_xml_reader_start_tag_attributes() {

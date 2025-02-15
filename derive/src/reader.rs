@@ -1,8 +1,7 @@
 use proc_macro::{Span, TokenStream};
 use quote::{quote, ToTokens as _};
 use syn::{
-    parse_macro_input, punctuated::Punctuated, spanned::Spanned as _, token::Comma, Data,
-    DeriveInput, Error, Field, Fields, LitBool, LitByteStr, LitStr,
+    parse_macro_input, punctuated::Punctuated, spanned::Spanned as _, token::Comma, Data, DeriveInput, Error, Field, Fields, Ident, LitBool, LitByteStr, LitStr
 };
 
 pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
@@ -81,6 +80,8 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
     let mut initial_item_elements = Vec::new(); // Stores element logic for initial item processing.
     let mut check_elements = Vec::new(); // Accumulates code to verify that all required XML data has been captured.
     let mut init_check_elements = Vec::new(); // Gathers code to initialize flags or state for element presence checking.
+    let mut check_attributes = Vec::new(); // Accumulates code to verify that all required attributes XML data has been captured.
+    let mut init_check_attributes = Vec::new(); // Gathers code to initialize flags or state for attributes presence checking.
 
     // Gather information if enum variants were found
     // Only supports elements
@@ -213,8 +214,7 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
                     // Mark the field to be read as an XML element.
                     else if meta.path.is_ident("element") {
                         element = true;
-                    }
-                    else {
+                    } else {
                         return Err(meta.error(format!(
                             "Unsupported `#[xml(...)]` option `{}`",
                             meta.path.clone().into_token_stream()
@@ -315,6 +315,10 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
             let attr_read_logic = match &field.ty {
                 // Match on the field's type to generate type-specific parsing code.
                 syn::Type::Path(type_path) => {
+                    // Add to check name to avoid naming conflicts
+                    let flag = format!("{}{}", field_name_str.replace(":", "_"), "_flag");
+                    let flag = Ident::new(&flag, Span::call_site().into());
+
                     let last_segment = type_path.path.segments.last().unwrap();
                     let field_name_as_bytes =
                         LitByteStr::new(field_name_str.as_bytes(), Span::call_site().into());
@@ -323,10 +327,24 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
                         // For boolean fields, interpret common true representations.
                         "bool" => Ok((
                             quote! {
-                                #field_name_as_bytes => self.#field_name = *a.value == *b"1" || *a.value == *b"true" || *a.value == *b"on",
+                                #field_name_as_bytes => {
+                                    self.#field_name = *a.value == *b"1" || *a.value == *b"true" || *a.value == *b"on";
+                                    #flag = true;
+                                },
                             },
                             quote! {
-                                #field_name_as_bytes => item.#field_name = *a.value == *b"1" || *a.value == *b"true" || *a.value == *b"on",
+                                #field_name_as_bytes => {
+                                    item.#field_name = *a.value == *b"1" || *a.value == *b"true" || *a.value == *b"on";
+                                    #flag = true;
+                                },
+                            },
+                            quote! {
+                                if !#flag {
+                                    panic!("Missing required attribute `{}`", #field_name_str);
+                                }
+                            },
+                            quote! {
+                                let mut #flag = false;
                             },
                         )),
                         // For Vec fields, expect a Vec<u8> that holds attribute data.
@@ -336,17 +354,32 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
                                     if inner_type.to_token_stream().to_string() == "u8" {
                                         Ok((
                                             quote! {
-                                                #field_name_as_bytes => self.#field_name = a.value.into(),
+                                                #field_name_as_bytes => {
+                                                    self.#field_name = a.value.into();
+                                                    #flag = true;
+                                                },
                                             },
                                             quote! {
-                                                #field_name_as_bytes => item.#field_name = a.value.into(),
+                                                #field_name_as_bytes => {
+                                                    item.#field_name = a.value.into();
+                                                    #flag = true;
+                                                },
+                                            },
+                                            quote! {
+                                                if !#flag {
+                                                    panic!("Missing required attribute `{}`", #field_name_str);
+                                                }
+                                            },
+                                            quote! {
+                                                let mut #flag = false;
                                             },
                                         ))
                                     } else {
                                         Err(Error::new(
-                                                inner_type.span(),
-                                                "Only Vec<u8> is supported for attribute. Specify `#[xml(element)]` if you want to serialize it as an element",
-                                            ))
+                                            inner_type.span(),
+                                            format!("Unsupported inner type `{}` for Vec attribute, only `u8` is supported. Specify `#[xml(element)]` if you want to serialize it as an element",
+                                        inner_type.into_token_stream()),
+                                    ))
                                     }
                                 } else {
                                     let generic = &args.args[0];
@@ -362,7 +395,60 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
                             arg => Err(Error::new(
                                 arg.span(),
                                 format!(
-                                    "Unsupported Vec type `{}` for attribute",
+                                    "Unsupported path type `{}` for Vec attribute",
+                                    arg.into_token_stream()
+                                ),
+                            )),
+                        },
+                        // For Vec fields, expect a Vec<u8> that holds attribute data.
+                        "Option" => match &type_path.path.segments[0].arguments {
+                            syn::PathArguments::AngleBracketed(args) => {
+                                if let syn::GenericArgument::Type(inner_type) = &args.args[0] {
+                                    let inner = inner_type.to_token_stream().to_string();
+                                    if inner == "Vec < u8 >" {
+                                        Ok((
+                                            quote! {
+                                                #field_name_as_bytes => self.#field_name = Some(a.value.into()),
+                                            },
+                                            quote! {
+                                                #field_name_as_bytes => item.#field_name = Some(a.value.into()),
+                                            },
+                                            quote! {},
+                                            quote! {},
+                                        ))
+                                    } else if inner == "bool" {
+                                        Ok((
+                                            quote! {
+                                                #field_name_as_bytes => self.#field_name = Some(*a.value == *b"1" || *a.value == *b"true" || *a.value == *b"on"),
+                                            },
+                                            quote! {
+                                                #field_name_as_bytes => item.#field_name = Some(*a.value == *b"1" || *a.value == *b"true" || *a.value == *b"on"),
+                                            },
+                                            quote! {},
+                                            quote! {},
+                                        ))
+                                    } else {
+                                        Err(Error::new(
+                                                inner_type.span(),
+                                                format!("Unsupported inner type `{}` for Optional attribute, only `Vec<u8>` or `bool` is supported. Specify `#[xml(element)]` if you want to serialize it as an element",
+                                            inner_type.into_token_stream()),
+                                        ))
+                                    }
+                                } else {
+                                    let generic = &args.args[0];
+                                    Err(Error::new(
+                                        generic.span(),
+                                        format!(
+                                            "Unsupported Optional inner type `{}` for attribute",
+                                            generic.into_token_stream()
+                                        ),
+                                    ))
+                                }
+                            }
+                            arg => Err(Error::new(
+                                arg.span(),
+                                format!(
+                                    "Unsupported path type `{}` for optional attribute",
                                     arg.into_token_stream()
                                 ),
                             )),
@@ -373,11 +459,11 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
                         )),
                     }
                 }
-                r#type => Err(Error::new(
-                    r#type.span(),
+                t => Err(Error::new(
+                    t.span(),
                     format!(
                         "Unsupported struct field type `{}`",
-                        r#type.into_token_stream()
+                        t.into_token_stream()
                     ),
                 )),
             };
@@ -386,6 +472,8 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
                 Ok(logic) => {
                     attributes.push(logic.0);
                     initial_item_attributes.push(logic.1);
+                    check_attributes.push(logic.2);
+                    init_check_attributes.push(logic.3);
                 }
                 Err(e) => panic!("Failed: {}", e),
             }
@@ -480,11 +568,11 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
                     }
                 }
 
-                r#type => Err(Error::new(
-                    r#type.span(),
+                t => Err(Error::new(
+                    t.span(),
                     format!(
                         "Unsupported struct field type `{}`",
-                        r#type.into_token_stream()
+                        t.into_token_stream()
                     ),
                 )),
             };
@@ -534,215 +622,227 @@ pub fn impl_xml_reader(input: TokenStream) -> TokenStream {
     }
 
     // Generate the implementation for the `XmlReader` trait for the struct
-    let expanded =
-        quote! {
-            impl<B: BufRead> XmlReader<B> for Vec<#name> {
-                fn read_xml<'a>(&mut self, tag_name: &'a str, xml: &'a mut Reader<B>, closing_name: &'a str, propagated_event: &'a mut Option<Result<Event<'static>, quick_xml::Error>>)
-                -> Result<(), XlsxError> {
-                    // Keep memory usage to a minimum
-                    let mut buf = Vec::with_capacity(1024);
-                    loop {
-                        // Initialize a instance of object to add to collection
-                        #init_element
-                        // Save memory usage 
-                        buf.clear();
-                        // Since we consume events to also break out loops
-                        // we need to be able reread whenever we breakout si we
-                        // do not miss out on data
-                        let event = if let Some(e) = propagated_event.take() {
-                            e
-                        } else {
-                            xml.read_event_into(&mut buf)
-                        };
-                        match event {
-                            Ok(Event::Empty(ref e)) | Ok(Event::Start(ref e)) if e.local_name().as_ref() == tag_name.as_bytes() => {
-                                // Read the tag attributes
-                                for attr in e.attributes() {
-                                    if let Ok(a) = attr {
-                                        match a.key.as_ref() {
-                                            #(#initial_item_attributes)*
-                                            _ => (),
-                                        }
-                                    }
-                                }
-                                // Read the nested tag contents
-                                if let Ok(Event::Start(_)) = event {
-                                    let mut nested_buf = Vec::with_capacity(1024);
-                                    // Set flags to verify
-                                    #(#init_check_elements)*
-                                    loop {
-                                        nested_buf.clear();
-                                        let event = if let Some(e) = propagated_event.take() {
-                                            e
-                                        } else {
-                                            xml.read_event_into(&mut nested_buf)
-                                        };
-                                        match event {
-                                            #(#initial_item_elements)*
-                                            Ok(Event::End(ref e)) if e.local_name().as_ref() == tag_name.as_bytes() => {
-                                                break
-                                            }
-                                            Ok(Event::Eof) => {
-                                                return Err(XlsxError::XmlEof(tag_name.into()))
-                                            }
-                                            Err(e) => {
-                                                return Err(XlsxError::Xml(e));
-                                            }
-                                            _ => (),
-                                        }
-                                    }
-                                    // Verify flag fields that are required are seen
-                                    #(#check_elements)*
-                                }
-                                // Update collection with new instance
-                                #add_vec_element
-                            }
-                            Ok(Event::Empty(ref e)) | Ok(Event::Start(ref e)) if e.local_name().as_ref() == closing_name.as_bytes() => {
-                                propagated_event.replace(Ok(event.unwrap().into_owned()));
-                                break
-                            },
-                            Ok(Event::End(ref e)) if e.local_name().as_ref() == closing_name.as_bytes() => {
-                                propagated_event.replace(Ok(event.unwrap().into_owned()));
-                                break
-                            },
-                            Ok(Event::Eof) => return Err(XlsxError::XmlEof(tag_name.into())),
-                            Err(e) => return Err(XlsxError::Xml(e)),
-                            _ => ()
-                        }
-                    }
-                    Ok(())
-                }
-            }
-            impl<B: BufRead> XmlReader<B> for #name {
-                fn read_xml<'a>(
-                    &mut self,
-                    tag_name: &'a str,
-                    xml: &'a mut Reader<B>,
-                    closing_name: &'a str,
-                    propagated_event: &'a mut Option<Result<Event<'static>, quick_xml::Error>>
-                ) -> Result<(), XlsxError> {
-                    let mut buf = Vec::with_capacity(1024);
-                    loop {
-                        buf.clear();
-                        let event = if let Some(e) = propagated_event.take() {
-                            e
-                        } else {
-                            xml.read_event_into(&mut buf)
-                        };
-                        match event {
-                            Ok(Event::Empty(ref e)) | Ok(Event::Start(ref e)) if e.local_name().as_ref() == tag_name.as_bytes() => {
-                                for attr in e.attributes() {
-                                    if let Ok(a) = attr {
-                                        match a.key.as_ref() {
-                                            #(#attributes)*
-                                            _ => (),
-                                        }
-                                    }
-                                }
-                                if let Ok(Event::Start(_)) = event {
-                                    let mut nested_buf = Vec::with_capacity(1024);
-                                    #(#init_check_elements)*
-                                    loop {
-                                        nested_buf.clear();
-                                        let event = if let Some(e) = propagated_event.take() {
-                                            e
-                                        } else {
-                                            xml.read_event_into(&mut nested_buf)
-                                        };
-                                        match event {
-                                            #(#elements)*
-                                            Ok(Event::End(ref e)) if e.local_name().as_ref() == tag_name.as_bytes() => {
-                                                break
-                                            }
-                                            Ok(Event::Eof) => {
-                                                return Err(XlsxError::XmlEof(tag_name.into()))
-                                            }
-                                            Err(e) => {
-                                                return Err(XlsxError::Xml(e));
-                                            }
-                                            _ => (),
-                                        }
-                                    }
-                                    #(#check_elements)*
-                                }
-                                break
-                            }
-                            Ok(Event::End(ref e)) if e.local_name().as_ref() == tag_name.as_bytes() => break,
-                            Ok(Event::Eof) => return Err(XlsxError::XmlEof(tag_name.into())),
-                            Err(e) => return Err(XlsxError::Xml(e)),
-                            _ => (),
-                        }
-                    }
-                    Ok(())
-                }
-            }
-            impl<B: BufRead> XmlReader<B> for Option<#name> {
-                fn read_xml<'a>(
-                    &mut self,
-                    tag_name: &'a str,
-                    xml: &'a mut Reader<B>,
-                    closing_name: &'a str,
-                    propagated_event: &'a mut Option<Result<Event<'static>, quick_xml::Error>>
-                ) -> Result<(), XlsxError> {
+    let expanded = quote! {
+        impl<B: BufRead> XmlReader<B> for Vec<#name> {
+            fn read_xml<'a>(&mut self, tag_name: &'a str, xml: &'a mut Reader<B>, closing_name: &'a str, propagated_event: &'a mut Option<Result<Event<'static>, quick_xml::Error>>)
+            -> Result<(), XlsxError> {
+                // Keep memory usage to a minimum
+                let mut buf = Vec::with_capacity(1024);
+                loop {
+                    // Initialize a instance of object to add to collection
                     #init_element
-                    let mut buf = Vec::with_capacity(1024);
-                    loop {
-                        buf.clear();
-                        let event = if let Some(e) = propagated_event.take() {
-                            e
-                        } else {
-                            xml.read_event_into(&mut buf)
-                        };
-                        match event {
-                            Ok(Event::Empty(ref e)) | Ok(Event::Start(ref e)) if e.local_name().as_ref() == tag_name.as_bytes() => {
-                                for attr in e.attributes() {
-                                    if let Ok(a) = attr {
-                                        match a.key.as_ref() {
-                                            #(#initial_item_attributes)*
-                                            _ => (),
-                                        }
+                    // Save memory usage
+                    buf.clear();
+                    // Since we consume events to also break out loops
+                    // we need to be able reread whenever we breakout si we
+                    // do not miss out on data
+                    let event = if let Some(e) = propagated_event.take() {
+                        e
+                    } else {
+                        xml.read_event_into(&mut buf)
+                    };
+                    match event {
+                        Ok(Event::Empty(ref e)) | Ok(Event::Start(ref e)) if e.local_name().as_ref() == tag_name.as_bytes() => {
+                            #(#init_check_attributes)*
+                            // Read the tag attributes
+                            for attr in e.attributes() {
+                                if let Ok(a) = attr {
+                                    match a.key.as_ref() {
+                                        #(#initial_item_attributes)*
+                                        _ => (),
                                     }
                                 }
-
-                                if let Ok(Event::Start(_)) = event {
-                                    let mut nested_buf = Vec::with_capacity(1024);
-                                    #(#init_check_elements)*
-                                    loop {
-                                        nested_buf.clear();
-                                        let event = if let Some(e) = propagated_event.take() {
-                                            e
-                                        } else {
-                                            xml.read_event_into(&mut nested_buf)
-                                        };
-                                        match event {
-                                            #(#initial_item_elements)*
-                                            Ok(Event::End(ref e)) if e.local_name().as_ref() == tag_name.as_bytes() => {
-                                                break
-                                            }
-                                            Ok(Event::Eof) => {
-                                                return Err(XlsxError::XmlEof(tag_name.into()))
-                                            }
-                                            Err(e) => {
-                                                return Err(XlsxError::Xml(e));
-                                            }
-                                            _ => (),
-                                        }
-                                    }
-                                    #(#check_elements)*
-                                }
-                                // To capture the optional actual data found
-                                #set_opt_element
-                                break
                             }
-                            Ok(Event::End(ref e)) if e.local_name().as_ref() == tag_name.as_bytes() => break,
-                            Ok(Event::Eof) => return Err(XlsxError::XmlEof(tag_name.into())),
-                            Err(e) => return Err(XlsxError::Xml(e)),
-                            _ => (),
+                            // Verify attributes fields that are required are seen
+                            #(#check_attributes)*
+
+                            // Read the nested tag contents
+                            if let Ok(Event::Start(_)) = event {
+                                let mut nested_buf = Vec::with_capacity(1024);
+                                // Set flags to verify
+                                #(#init_check_elements)*
+                                loop {
+                                    nested_buf.clear();
+                                    let event = if let Some(e) = propagated_event.take() {
+                                        e
+                                    } else {
+                                        xml.read_event_into(&mut nested_buf)
+                                    };
+                                    match event {
+                                        #(#initial_item_elements)*
+                                        Ok(Event::End(ref e)) if e.local_name().as_ref() == tag_name.as_bytes() => {
+                                            break
+                                        }
+                                        Ok(Event::Eof) => {
+                                            return Err(XlsxError::XmlEof(tag_name.into()))
+                                        }
+                                        Err(e) => {
+                                            return Err(XlsxError::Xml(e));
+                                        }
+                                        _ => (),
+                                    }
+                                }
+                                // Verify element that are required are seen
+                                #(#check_elements)*
+                            }
+                            // Update collection with new instance
+                            #add_vec_element
                         }
+                        Ok(Event::Empty(ref e)) | Ok(Event::Start(ref e)) if e.local_name().as_ref() == closing_name.as_bytes() => {
+                            propagated_event.replace(Ok(event.unwrap().into_owned()));
+                            break
+                        },
+                        Ok(Event::End(ref e)) if e.local_name().as_ref() == closing_name.as_bytes() => {
+                            propagated_event.replace(Ok(event.unwrap().into_owned()));
+                            break
+                        },
+                        Ok(Event::Eof) => return Err(XlsxError::XmlEof(tag_name.into())),
+                        Err(e) => return Err(XlsxError::Xml(e)),
+                        _ => ()
                     }
-                    Ok(())
                 }
+                Ok(())
             }
-        };
+        }
+        impl<B: BufRead> XmlReader<B> for #name {
+            fn read_xml<'a>(
+                &mut self,
+                tag_name: &'a str,
+                xml: &'a mut Reader<B>,
+                closing_name: &'a str,
+                propagated_event: &'a mut Option<Result<Event<'static>, quick_xml::Error>>
+            ) -> Result<(), XlsxError> {
+                let mut buf = Vec::with_capacity(1024);
+                loop {
+                    buf.clear();
+                    let event = if let Some(e) = propagated_event.take() {
+                        e
+                    } else {
+                        xml.read_event_into(&mut buf)
+                    };
+                    match event {
+                        Ok(Event::Empty(ref e)) | Ok(Event::Start(ref e)) if e.local_name().as_ref() == tag_name.as_bytes() => {
+                            #(#init_check_attributes)*
+                            for attr in e.attributes() {
+                                if let Ok(a) = attr {
+                                    match a.key.as_ref() {
+                                        #(#attributes)*
+                                        _ => (),
+                                    }
+                                }
+                            }
+                            // Verify attributes fields that are required are seen
+                            #(#check_attributes)*
+
+                            if let Ok(Event::Start(_)) = event {
+                                let mut nested_buf = Vec::with_capacity(1024);
+                                #(#init_check_elements)*
+                                loop {
+                                    nested_buf.clear();
+                                    let event = if let Some(e) = propagated_event.take() {
+                                        e
+                                    } else {
+                                        xml.read_event_into(&mut nested_buf)
+                                    };
+                                    match event {
+                                        #(#elements)*
+                                        Ok(Event::End(ref e)) if e.local_name().as_ref() == tag_name.as_bytes() => {
+                                            break
+                                        }
+                                        Ok(Event::Eof) => {
+                                            return Err(XlsxError::XmlEof(tag_name.into()))
+                                        }
+                                        Err(e) => {
+                                            return Err(XlsxError::Xml(e));
+                                        }
+                                        _ => (),
+                                    }
+                                }
+                                // Verify element that are required are seen
+                                #(#check_elements)*
+                            }
+                            break
+                        }
+                        Ok(Event::End(ref e)) if e.local_name().as_ref() == tag_name.as_bytes() => break,
+                        Ok(Event::Eof) => return Err(XlsxError::XmlEof(tag_name.into())),
+                        Err(e) => return Err(XlsxError::Xml(e)),
+                        _ => (),
+                    }
+                }
+                Ok(())
+            }
+        }
+        impl<B: BufRead> XmlReader<B> for Option<#name> {
+            fn read_xml<'a>(
+                &mut self,
+                tag_name: &'a str,
+                xml: &'a mut Reader<B>,
+                closing_name: &'a str,
+                propagated_event: &'a mut Option<Result<Event<'static>, quick_xml::Error>>
+            ) -> Result<(), XlsxError> {
+                #init_element
+                let mut buf = Vec::with_capacity(1024);
+                loop {
+                    buf.clear();
+                    let event = if let Some(e) = propagated_event.take() {
+                        e
+                    } else {
+                        xml.read_event_into(&mut buf)
+                    };
+                    match event {
+                        Ok(Event::Empty(ref e)) | Ok(Event::Start(ref e)) if e.local_name().as_ref() == tag_name.as_bytes() => {
+                            #(#init_check_attributes)*
+                            for attr in e.attributes() {
+                                if let Ok(a) = attr {
+                                    match a.key.as_ref() {
+                                        #(#initial_item_attributes)*
+                                        _ => (),
+                                    }
+                                }
+                            }
+                            // Verify attributes fields that are required are seen
+                            #(#check_attributes)*
+
+                            if let Ok(Event::Start(_)) = event {
+                                let mut nested_buf = Vec::with_capacity(1024);
+                                #(#init_check_elements)*
+                                loop {
+                                    nested_buf.clear();
+                                    let event = if let Some(e) = propagated_event.take() {
+                                        e
+                                    } else {
+                                        xml.read_event_into(&mut nested_buf)
+                                    };
+                                    match event {
+                                        #(#initial_item_elements)*
+                                        Ok(Event::End(ref e)) if e.local_name().as_ref() == tag_name.as_bytes() => {
+                                            break
+                                        }
+                                        Ok(Event::Eof) => {
+                                            return Err(XlsxError::XmlEof(tag_name.into()))
+                                        }
+                                        Err(e) => {
+                                            return Err(XlsxError::Xml(e));
+                                        }
+                                        _ => (),
+                                    }
+                                }
+                                // Verify element that are required are seen
+                                #(#check_elements)*
+                            }
+                            // To capture the optional actual data found
+                            #set_opt_element
+                            break
+                        }
+                        Ok(Event::End(ref e)) if e.local_name().as_ref() == tag_name.as_bytes() => break,
+                        Ok(Event::Eof) => return Err(XlsxError::XmlEof(tag_name.into())),
+                        Err(e) => return Err(XlsxError::Xml(e)),
+                        _ => (),
+                    }
+                }
+                Ok(())
+            }
+        }
+    };
     TokenStream::from(expanded)
 }
