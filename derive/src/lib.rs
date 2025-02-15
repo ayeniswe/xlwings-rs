@@ -252,27 +252,39 @@ pub fn derive_xml_reader(input: TokenStream) -> TokenStream {
     reader::impl_xml_reader(input)
 }
 
-/// A procedural macro to implements traits `TryFrom` and `From<T>` to
-/// allow converting enum variants into bytes or vice-versa.
+/// The `EnumToBytes` macro can be used to convert an enum to/from bytes.
+/// 
+/// When applied, it will automatically transform the enum variants into their
+/// byte representations. The top-level `camelcase` attribute will convert
+/// **all variants** of the enum to camelCase.
 ///
-/// # Example
-/// ```
-/// use derive::EnumToBytes;
+/// ## `#[camelcase]`
+/// - **Purpose**: Specifies that a variant or enum will use camelCase.
+/// - **Usage**: Applied to a single enum variant or enum
+/// - **Example**:
+///   ```rust
+///   #[derive(EnumToBytes)]
+///   enum MyEnum {
+///       #[camelCase]
+///       FirstVariant,
+///       SecondVariant,
+///   }
+///   ```
+/// - **Notes**:
+///   - Either `camelcase` or `name` can be used, but not both for a single variant
 ///
-/// #[derive(Debug, PartialEq, EnumToBytes)]
-/// enum MyEnum {
-///     One,
-///     ThirtyTwo,
-/// }
-///
-/// let bytes: Vec<u8> = MyEnum::One.into();
-///
-/// assert_eq!(bytes, b"one");
-/// assert_eq!(MyEnum::try_from(b"one".to_vec()).unwrap(), MyEnum::One);
-/// ```
-///
-/// # Notes
-/// - Variant names are taken as-is or transformed to `camelCase` if `PascalCase`
+/// ## `#[name]`
+/// - **Purpose**: Specifies that a variant will be renamed as specified.
+/// - **Usage**: Applied to a single enum variant or enum
+/// - **Example**:
+///   ```rust
+///   #[derive(EnumToBytes)]
+///   enum MyEnum {
+///       #[name = "NewVariant"]
+///       FirstVariant,
+///       SecondVariant,
+///   }
+///   ```
 #[proc_macro_derive(EnumToBytes)]
 pub fn derive_enum_to_bytes(input: TokenStream) -> TokenStream {
     enum_to_bytes::impl_enum_to_bytes(input)
