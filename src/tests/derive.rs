@@ -756,3 +756,38 @@ mod xml_reader_derive {
         );
     }
 }
+
+mod enum_to_bytes_derive {
+    use super::*;
+    use crate::stream::xlsx::errors::XlsxError;
+    use derive::EnumToBytes;
+
+    #[test]
+    fn test_enum_to_bytes() {
+        #[derive(Debug, PartialEq, EnumToBytes)]
+        enum MyEnum {
+            One,
+            ThirtyTwo,
+        }
+        let bytes: Vec<u8> = MyEnum::One.into();
+        assert_eq!(bytes, b"one");
+    }
+    #[test]
+    fn test_bytes_to_enum() {
+        #[derive(Debug, PartialEq, EnumToBytes)]
+        enum MyEnum {
+            One,
+            ThirtyTwo,
+        }
+        assert_eq!(MyEnum::try_from(b"one".to_vec()).unwrap(), MyEnum::One);
+    }
+    #[test]
+    fn test_enum_to_bytes_pascalcase_to_camelcase() {
+        #[derive(Debug, PartialEq, EnumToBytes)]
+        enum MyEnum {
+            One,
+            ThirtyTwo,
+        }
+        assert_eq!(MyEnum::try_from(b"thirtyTwo".to_vec()).unwrap(), MyEnum::ThirtyTwo);
+    }
+}

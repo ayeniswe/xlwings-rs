@@ -1,3 +1,4 @@
+mod enum_to_bytes;
 mod reader;
 mod writer;
 
@@ -249,4 +250,30 @@ pub fn derive_xml_writer(input: TokenStream) -> TokenStream {
 #[proc_macro_derive(XmlRead, attributes(xml))]
 pub fn derive_xml_reader(input: TokenStream) -> TokenStream {
     reader::impl_xml_reader(input)
+}
+
+/// A procedural macro to implements traits `TryFrom` and `From<T>` to
+/// allow converting enum variants into bytes or vice-versa.
+///
+/// # Example
+/// ```
+/// use derive::EnumToBytes;
+///
+/// #[derive(Debug, PartialEq, EnumToBytes)]
+/// enum MyEnum {
+///     One,
+///     ThirtyTwo,
+/// }
+///
+/// let bytes: Vec<u8> = MyEnum::One.into();
+///
+/// assert_eq!(bytes, b"one");
+/// assert_eq!(MyEnum::try_from(b"one".to_vec()).unwrap(), MyEnum::One);
+/// ```
+///
+/// # Notes
+/// - Variant names are taken as-is or transformed to `camelCase` if `PascalCase`
+#[proc_macro_derive(EnumToBytes)]
+pub fn derive_enum_to_bytes(input: TokenStream) -> TokenStream {
+    enum_to_bytes::impl_enum_to_bytes(input)
 }
