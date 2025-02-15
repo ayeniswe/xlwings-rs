@@ -1,13 +1,13 @@
 mod xml_writer_derive {
     use crate::stream::{utils::XmlWriter, xlsx::errors::XlsxError};
     use derive::XmlWrite;
+    use quick_xml::events::BytesText;
     use quick_xml::Writer;
     use std::io::Cursor;
     use std::io::Write;
-    use quick_xml::events::BytesText;
 
     #[test]
-    fn test_xml_write_inner_text() {
+    fn test_xml_write_skip() {
         #[derive(XmlWrite)]
         struct Example {
             #[xml(skip)]
@@ -22,7 +22,105 @@ mod xml_writer_derive {
         let _ = sheet.write_xml(&mut writer, "sheet");
 
         let xml_output = String::from_utf8(buffer.into_inner()).unwrap();
-        let expected_output = r#"<Example>DO NOT SHOW</Example>"#;
+        let expected_output = r#"<sheet/>"#;
+        assert_eq!(xml_output, expected_output);
+    }
+    #[test]
+    fn test_xml_write_inner_text() {
+        #[derive(XmlWrite)]
+        struct Example {
+            #[xml(val)]
+            help: Vec<u8>,
+        }
+        let sheet = Example {
+            help: "DO SHOW".into(),
+        };
+
+        let mut buffer = Cursor::new(Vec::new());
+        let mut writer = Writer::new(&mut buffer);
+        let _ = sheet.write_xml(&mut writer, "sheet");
+
+        let xml_output = String::from_utf8(buffer.into_inner()).unwrap();
+        let expected_output = r#"<sheet>DO SHOW</sheet>"#;
+        assert_eq!(xml_output, expected_output);
+    }
+    #[test]
+    fn test_xml_write_attribute() {
+        #[derive(XmlWrite)]
+        struct Example {
+            help: Vec<u8>,
+        }
+        let sheet = Example {
+            help: "DO SHOW".into(),
+        };
+
+        let mut buffer = Cursor::new(Vec::new());
+        let mut writer = Writer::new(&mut buffer);
+        let _ = sheet.write_xml(&mut writer, "sheet");
+
+        let xml_output = String::from_utf8(buffer.into_inner()).unwrap();
+        let expected_output = r#"<sheet help="DO SHOW"/>"#;
+        assert_eq!(xml_output, expected_output);
+    }
+    #[test]
+    fn test_xml_write_element() {
+        #[derive(XmlWrite)]
+        struct Example {
+            #[xml(element)]
+            help: Sub,
+        }
+        #[derive(XmlWrite)]
+        struct Sub {
+            name: Vec<u8>,
+        }
+        let sheet = Example {
+            help: Sub {
+                name: "DO SHOW".into(),
+            },
+        };
+
+        let mut buffer = Cursor::new(Vec::new());
+        let mut writer = Writer::new(&mut buffer);
+        let _ = sheet.write_xml(&mut writer, "sheet");
+
+        let xml_output = String::from_utf8(buffer.into_inner()).unwrap();
+        let expected_output = r#"<sheet><help name="DO SHOW"/></sheet>"#;
+        assert_eq!(xml_output, expected_output);
+    }
+    #[test]
+    fn test_xml_write_optional_element() {
+        #[derive(XmlWrite)]
+        struct Example {
+            #[xml(element)]
+            help: Option<Sub>,
+        }
+        #[derive(XmlWrite)]
+        struct Sub {
+            name: Vec<u8>,
+        }
+
+        let sheet = Example {
+            help: Some(Sub {
+                name: "DO SHOW".into(),
+            }),
+        };
+
+        let mut buffer = Cursor::new(Vec::new());
+        let mut writer = Writer::new(&mut buffer);
+        let _ = sheet.write_xml(&mut writer, "sheet");
+
+        let xml_output = String::from_utf8(buffer.into_inner()).unwrap();
+        let expected_output = r#"<sheet><help name="DO SHOW"/></sheet>"#;
+        assert_eq!(xml_output, expected_output);
+
+        let sheet = Example { help: None };
+
+        let mut buffer = Cursor::new(Vec::new());
+        let mut writer = Writer::new(&mut buffer);
+        let _ = sheet.write_xml(&mut writer, "sheet");
+
+        let xml_output = String::from_utf8(buffer.into_inner()).unwrap();
+        let expected_output = r#"<sheet></sheet>"#;
         assert_eq!(xml_output, expected_output);
     }
 }

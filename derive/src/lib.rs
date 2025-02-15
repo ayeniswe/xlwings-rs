@@ -10,7 +10,7 @@ use proc_macro::TokenStream;
 ///
 /// # Attributes
 ///
-/// Note: This macro is limited to attributes of Vec<u8> and bool types.
+/// Note: This macro is limited to attributes and inner values of `Vec<u8>` and `bool` types.
 ///
 /// The following attributes are supported:
 ///
@@ -22,7 +22,7 @@ use proc_macro::TokenStream;
 ///   #[derive(XmlWrite)]
 ///   struct MyStruct {
 ///       #[x(name = "custom_name")]
-///       field: i32,
+///       field: Vec<u8>,
 ///   }
 ///   ```
 /// - **Notes**:
@@ -102,6 +102,20 @@ use proc_macro::TokenStream;
 /// - **Notes**:
 ///   - The field ignores the other attribute's options
 ///
+/// ## `#[xml(val)]`
+/// - **Purpose**: Specifies that the field will be written as a inner value.
+/// - **Usage**: Applied to a single struct fields.
+/// - **Example**:
+///   ```rust
+///   #[derive(XmlWrite)]
+///   struct MyStruct {
+///       #[xml(val)]
+///       item: Vec<u8>,
+///   }
+///   ```
+/// - **Notes**:
+///   - Only a single field can have this attribute
+///
 /// # Examples
 ///
 /// Basic usage:
@@ -127,7 +141,7 @@ pub fn derive_xml_writer(input: TokenStream) -> TokenStream {
 ///
 /// # Attributes
 ///
-/// Note: This macro is limited to attributes of Vec<u8> and bool types.
+/// Note: This macro is limited to attributes and inner values of `Vec<u8>` and `bool` types.
 ///
 /// The following attributes are supported:
 ///
@@ -139,7 +153,7 @@ pub fn derive_xml_writer(input: TokenStream) -> TokenStream {
 ///   #[derive(XmlRead)]
 ///   struct MyStruct {
 ///       #[x(name = "custom_name")]
-///       field: i32,
+///       field: Vec<u8>,
 ///   }
 ///   ```
 /// - **Notes**:
@@ -212,7 +226,7 @@ pub fn derive_xml_writer(input: TokenStream) -> TokenStream {
 ///   ```rust
 ///   #[derive(XmlRead)]
 ///   struct MyStruct {
-///       #[xml(value)]
+///       #[xml(val)]
 ///       item: Vec<u8>,
 ///   }
 ///   ```

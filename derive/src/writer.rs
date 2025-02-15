@@ -1,7 +1,8 @@
 use proc_macro::TokenStream;
 use quote::{quote, ToTokens as _};
 use syn::{
-    parse_macro_input, punctuated::Punctuated, spanned::Spanned as _, token::Comma, Data, DeriveInput, Error, Field, Fields, LitBool, LitByteStr, LitStr
+    parse_macro_input, punctuated::Punctuated, spanned::Spanned as _, token::Comma, Data,
+    DeriveInput, Error, Field, Fields, LitBool, LitByteStr, LitStr,
 };
 
 pub fn impl_xml_writer(input: TokenStream) -> TokenStream {
@@ -60,7 +61,7 @@ pub fn impl_xml_writer(input: TokenStream) -> TokenStream {
                     if u.unnamed.len() > 1 {
                         panic!("Only tuple-like variants with a single field are supported")
                     } else {
-                        fields.push((variant, u.unnamed.iter().last().unwrap()))
+                        fields.push(variant)
                     }
                 }
                 _ => panic!("Only enums variants tuple-like are supported"),
@@ -69,51 +70,56 @@ pub fn impl_xml_writer(input: TokenStream) -> TokenStream {
         variants_fields = fields
     }
 
-    // TODO INTEGRATE ENUM MACROS
-    // Gather information if enum variants were found
-    // Only supports elements
-    // for variant in &variants_fields {
-    //     // Destructure each tuple to get the enum variant definition and its associated field type.
-    //     let (variant, variant_field_type) = (variant.0, variant.1);
-    //     // Retrieve the variant's identifier and convert it to a string, which will serve as the default XML tag name.
-    //     let variant_name = &variant.ident;
-    //     let mut variant_name_str = variant_name.to_string();
-    //     // Process each attribute attached to the variant.
-    //     for attr in &variant.attrs {
-    //         let result = if attr.path().is_ident("xml") {
-    //             // If the attribute is #[xml(...)], parse its nested metadata.
-    //             attr.parse_nested_meta(|meta| {
-    //                 // If a 'name' option is provided, override the default tag name with this value.
-    //                 if meta.path.is_ident("name") {
-    //                     variant_name_str = meta.value()?.parse::<LitStr>()?.value();
-    //                 }
-    //                 Ok(())
-    //             })
-    //         } else if attr.path().is_ident("doc") {
-    //             // Ignore documentation attributes.
-    //             Ok(())
-    //         } else {
-    //             // Any other attribute is not supported and results in an error.
-    //             Err(Error::new(
-    //                 attr.span(),
-    //                 format!(
-    //                     "Unsupported attribute `{}` - expected `#[xml(...)]`",
-    //                     attr.path().into_token_stream()
-    //                 ),
-    //             ))
-    //         };
-    //         // If parsing fails, terminate with an error.
-    //         if let Err(e) = result {
-    //             panic!("Failed to parse: {}", e);
-    //         }
-    //     }
-    // }
-
     // XML serialization code: prepare containers for various XML parsing components.
     let mut attr_writers = Vec::new(); // tag attribute writers
     let mut element_writers = Vec::new(); // tag element writers
     let mut inner_text = quote! {}; // tag element inner text
 
+    // Gather information if enum variants were found
+    // Only supports elements
+    for variant in &variants_fields {
+        // Retrieve the variant's identifier and convert it to a string, which will serve as the default XML tag name.
+        let variant_name = &variant.ident;
+        let mut variant_name_str = variant_name.to_string();
+        // Process each attribute attached to the variant.
+        for attr in &variant.attrs {
+            let result = if attr.path().is_ident("xml") {
+                // If the attribute is #[xml(...)], parse its nested metadata.
+                attr.parse_nested_meta(|meta| {
+                    // If a 'name' option is provided, override the default tag name with this value.
+                    if meta.path.is_ident("name") {
+                        variant_name_str = meta.value()?.parse::<LitStr>()?.value();
+                    }
+                    Ok(())
+                })
+            } else if attr.path().is_ident("doc") {
+                // Ignore documentation attributes.
+                Ok(())
+            } else {
+                // Any other attribute is not supported and results in an error.
+                Err(Error::new(
+                    attr.span(),
+                    format!(
+                        "Unsupported attribute `{}` - expected `#[xml(...)]`",
+                        attr.path().into_token_stream()
+                    ),
+                ))
+            };
+            // If parsing fails, terminate with an error.
+            if let Err(e) = result {
+                panic!("Failed to parse: {}", e);
+            }
+        }
+        // Generate the code fragment to handle XML inner writer types
+        element_writers.push(quote! {
+            #name::#variant_name(v) => {
+                v.write_xml(writer, #variant_name_str)?
+            }
+        });
+    }
+    //
+    // OR
+    //
     // Optional metadata that can effect globally other fields
     let mut following_elements = false;
     let mut inner_value_found = false;
@@ -343,77 +349,72 @@ pub fn impl_xml_writer(input: TokenStream) -> TokenStream {
         quote! { tag_name }
     };
 
-    let writer = if inner_value_found {
-        // Writes only inner text
+    // Generate the implementation for the `XmlWriter` trait for the struct
+    let expanded = if !variants_fields.is_empty() {
+        // Generated writer trait for enum data type
         quote! {
-            let text = String::from_utf8_lossy(&#inner_text);
-            writer
-                .create_element(#tag_name)
-                .with_attributes(attrs)
-                .write_text_content(BytesText::new(&text))?;
-        }
-    } else if element_writers.is_empty() {
-        // Allows to only write attributes
-        quote! {
-            writer
-                .create_element(#tag_name)
-                .with_attributes(attrs)
-                .write_empty()?;
+            impl<W: Write> XmlWriter<W> for #name {
+                fn write_xml<'a>(
+                    &self,
+                    writer: &'a mut Writer<W>,
+                    tag_name: &str,
+                ) -> Result<&'a mut Writer<W>, XlsxError> {
+                    match self {
+                        #(#element_writers)*
+                    };
+                    Ok(writer)
+                }
+            }
         }
     } else {
-        // Writes nested elements
+        let writer = if inner_value_found {
+            // Writes only inner text
+            quote! {
+                let text = String::from_utf8_lossy(&#inner_text);
+                writer
+                    .create_element(#tag_name)
+                    .with_attributes(attrs)
+                    .write_text_content(BytesText::new(&text))?;
+            }
+        } else if element_writers.is_empty() {
+            // Allows to only write attributes
+            quote! {
+                writer
+                    .create_element(#tag_name)
+                    .with_attributes(attrs)
+                    .write_empty()?;
+            }
+        } else {
+            // Writes nested elements
+            quote! {
+                writer
+                    .create_element(#tag_name)
+                    .with_attributes(attrs)
+                    .write_inner_content::<_, XlsxError>(|writer| {
+                    // Generated element writing logic
+                    #(#element_writers)*
+                    Ok(())
+                })?;
+            }
+        };
+
         quote! {
-            writer
-                .create_element(#tag_name)
-                .with_attributes(attrs)
-                .write_inner_content::<_, XlsxError>(|writer| {
-                // Generated element writing logic
-                #(#element_writers)*
-                Ok(())
-            })?;
-        }
-    };
+            impl<W: Write> XmlWriter<W> for #name {
+                fn write_xml<'a>(
+                    &self,
+                    writer: &'a mut Writer<W>,
+                    tag_name: &'a str,
+                ) -> Result<&'a mut Writer<W>, XlsxError> {
+                    let mut attrs: Vec<(&[u8], &[u8])> = Vec::new();
+                    // Generated attribute writing logic
+                    #(#attr_writers)*
 
-    // Generate the implementation for the `XmlWriter` trait for the struct
-    let expanded = quote! {
-        impl<W: Write> XmlWriter<W> for #name {
-            fn write_xml<'a>(
-                &self,
-                writer: &'a mut Writer<W>,
-                tag_name: &'a str,
-            ) -> Result<&'a mut Writer<W>, XlsxError> {
-                let mut attrs: Vec<(&[u8], &[u8])> = Vec::new();
-                // Generated attribute writing logic
-                #(#attr_writers)*
+                    #writer
 
-                #writer
-
-                Ok(writer)
+                    Ok(writer)
+                }
             }
         }
     };
     TokenStream::from(expanded)
 }
-
-// impl<W: Write> XmlWriter<W> for StringType {
-//     fn write_xml<'a>(
-//         &self,
-//         writer: &'a mut Writer<W>,
-//         tag_name: &str,
-//     ) -> Result<&'a mut Writer<W>, XlsxError> {
-//         match self {
-//             StringType::Preserve(s) => {
-//                 writer
-//                     .create_element(tag_name)
-//                     .with_attribute(("xml:space", "preserve"))
-//                     .write_text_content(BytesText::new(s))?
-//             }
-//             StringType::NoPreserve(s) => {
-//                 writer
-//                     .create_element(tag_name)
-//                     .write_text_content(BytesText::new(s))?
-//             }
-//         };
-//         Ok(writer)
-//     }
-// }
