@@ -173,6 +173,8 @@ pub fn impl_xml_writer(input: TokenStream) -> TokenStream {
                                 meta.path.clone().into_token_stream()
                             )));
                         }
+                    } else if meta.path.is_ident("sequence") {
+                        // ignore applies to xml reader only
                     } else {
                         return Err(meta.error(format!(
                             "Unsupported `#[xml(...)]` option `{}`",
