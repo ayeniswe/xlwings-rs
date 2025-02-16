@@ -44,6 +44,7 @@ use std::io::{BufRead, Write};
 /// - `GregorianXlitEnglish`: Represents the English transliterated Gregorian calendar.
 /// - `GregorianXlitFrench`: Represents the French transliterated Gregorian calendar.
 #[derive(Debug, Default, Clone, PartialEq, EnumToBytes)]
+#[camel]
 pub enum STCalendarType {
     #[default]
     None,
@@ -87,6 +88,7 @@ pub enum STCalendarType {
 /// - `Minute`: Represents grouping by minute.
 /// - `Second`: Represents grouping by second.
 #[derive(Debug, Clone, PartialEq, EnumToBytes)]
+#[camel]
 pub enum STDateTimeGrouping {
     Year,
     Month,
@@ -266,17 +268,26 @@ impl CTIconFilter {
 /// - `filter_val`: The actual cell value in the range which is used to perform the comparison for this filter.
 #[derive(Debug, Default, Clone, PartialEq, XmlRead, XmlWrite)]
 struct CTTop10 {
-    top: bool,
-    percent: bool,
+    #[xml(default_bool = true)]
+    top: Option<bool>,
+    #[xml(default_bool = false)]
+    percent: Option<bool>,
     val: Vec<u8>,
-    filter_val: Vec<u8>,
+    filter_val: Option<Vec<u8>>,
 }
 impl CTTop10 {
     /// Creates a new `CT_Top10` with XML schema default values.
-    fn new() -> Self {
+    fn new(top: Option<bool>, percent: Option<bool>, val: f32, filter_val: Option<f32>) -> Self {
+        let value = if let Some(v) = filter_val {
+            Some(v.to_string().to_vec())
+        } else {
+            None
+        }
         Self {
-            top: true,
-            ..Default::default()
+            top,
+            percent,
+            val: val.to_string().into(),
+            filter_val: value
         }
     }
 }
@@ -738,40 +749,40 @@ impl TryFrom<Vec<u8>> for STSortBy {
 #[derive(Debug, Clone, PartialEq, Eq, EnumToBytes)]
 pub enum STIconSetType {
     /// Represents a set of 3 arrows used for conditional formatting.
-    #[b(name = "3Arrows")]
+    #[name = "3Arrows"]
     ThreeArrows,
     /// Represents a set of 3 flags for conditional formatting.
-    #[b(name = "3Flags")]
+    #[name = "3Flags"]
     ThreeFlags,
     /// Represents a set of 3 traffic lights (set 1) for conditional formatting.
-    #[b(name = "3TrafficLights1")]
+    #[name = "3TrafficLights1"]
     ThreeTrafficLights1,
     /// Represents a set of 3 traffic lights (set 2) for conditional formatting.
-    #[b(name = "3TrafficLights2")]
+    #[name = "3TrafficLights2"]
     ThreeTrafficLights2,
     /// Represents a set of 3 signs for conditional formatting.
-    #[b(name = "3Signs")]
+    #[name = "3Signs"]
     ThreeSigns,
     /// Represents a set of 3 symbols for conditional formatting.
-    #[b(name = "3Symbols")]
+    #[name = "3Symbols"]
     ThreeSymbols,
     /// Represents a different set of 3 symbols for conditional formatting.
-    #[b(name = "3Symbols2")]
+    #[name = "3Symbols2"]
     ThreeSymbols2,
     /// Represents a set of 4 arrows for conditional formatting.
-    #[b(name = "4Arrows")]
+    #[name = "4Arrows"]
     FourArrows,
     /// Represents a set of 4 traffic lights for conditional formatting.
-    #[b(name = "4TrafficLights")]
+    #[name = "4TrafficLights"]
     FourTrafficLights,
     /// Represents a set of 5 arrows for conditional formatting.
-    #[b(name = "5Arrows")]
+    #[name = "5Arrows"]
     FiveArrows,
     /// Represents a set of 5 traffic lights for conditional formatting.
-    #[b(name = "5TrafficLights")]
+    #[name = "5TrafficLights"]
     FiveTrafficLights,
     /// Represents a set of 5 quarters for conditional formatting.
-    #[b(name = "5Quarters")]
+    #[name = "5Quarters"]
     FiveQuarters,
 }
 /// Represents the condition for sorting in a document.
