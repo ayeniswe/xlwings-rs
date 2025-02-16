@@ -278,7 +278,7 @@ struct CTTop10 {
 impl CTTop10 {
     /// Creates a new `CT_Top10` with XML schema default values.
     fn new(top: Option<bool>, percent: Option<bool>, val: f32, filter_val: Option<f32>) -> Self {
-        let value = if let Some(v) = filter_val {
+        let filter_val = if let Some(v) = filter_val {
             Some(v.to_string().to_vec())
         } else {
             None
@@ -287,7 +287,7 @@ impl CTTop10 {
             top,
             percent,
             val: val.to_string().into(),
-            filter_val: value
+            filter_val,
         }
     }
 }
@@ -360,93 +360,79 @@ impl CTTop10 {
 /// - `LastYear`: Filters for the previous year.
 /// - `YearToDate`: Filters from the start of the year until the current date.
 /// - `Q1`, `Q2`, `Q3`, `Q4`: Represents the quarters of the year.
-/// - `M1`, `M2`, `M3`, ..., `M12`: Represents the months of the year (from January to December).
-#[derive(Debug, Clone, PartialEq)]
+/// - `M1`, `M2`, `M3`, ..., `M12`: Represents the months of the year (from January to 
+#[derive(Debug, Clone, PartialEq, EnumToBytes)]
 pub enum STDynamicFilterType {
+    #[camel] /// Represents no dynamic filter.
     Null,
+    #[camel] /// Filters for values above the average.
     AboveAverage,
+    #[camel] /// Filters for values below the average.
     BelowAverage,
+    #[camel] /// Filters for tomorrow's values.
     Tomorrow,
+    #[camel] /// Filters for today's values.
     Today,
+    #[camel] /// Filters for yesterday's values.
     Yesterday,
+    #[camel] /// Filters for the upcoming week.
     NextWeek,
+    #[camel] /// Filters for this week's values.
     ThisWeek,
+    #[camel] /// Filters for the previous week.
     LastWeek,
+    #[camel] /// Filters for the upcoming month.
     NextMonth,
+    #[camel] /// Filters for this month's values.
     ThisMonth,
+    #[camel] /// Filters for the previous month.
     LastMonth,
+    #[camel] /// Filters for the upcoming quarter.
     NextQuarter,
+    #[camel] /// Filters for this quarter's values.
     ThisQuarter,
+    #[camel] /// Filters for the previous quarter.
     LastQuarter,
+    #[camel] /// Filters for the upcoming year.
     NextYear,
+    #[camel] /// Filters for this year's values.
     ThisYear,
+    #[camel] /// Filters for the previous year.
     LastYear,
+    #[camel] /// Filters from the start of the year until the current date.
     YearToDate,
+    #[camel] /// Represents the first quarter of the year.
     Q1,
+    #[camel] /// Represents the second quarter of the year.
     Q2,
+    #[camel] /// Represents the third quarter of the year.
     Q3,
+    #[camel] /// Represents the fourth quarter of the year.
     Q4,
+    #[camel] /// Represents the first month of the year (January).
     M1,
+    #[camel] /// Represents the second month of the year (February).
     M2,
+    #[camel] /// Represents the third month of the year (March).
     M3,
+    #[camel] /// Represents the fourth month of the year (April).
     M4,
+    #[camel] /// Represents the fifth month of the year (May).
     M5,
+    #[camel] /// Represents the sixth month of the year (June).
     M6,
+    #[camel] /// Represents the seventh month of the year (July).
     M7,
+    #[camel] /// Represents the eighth month of the year (August).
     M8,
+    #[camel] /// Represents the ninth month of the year (September).
     M9,
+    #[camel] /// Represents the tenth month of the year (October).
     M10,
+    #[camel] /// Represents the eleventh month of the year (November).
     M11,
+    #[camel] /// Represents the twelfth month of the year (December).
     M12,
-}
-impl TryFrom<Vec<u8>> for STDynamicFilterType {
-    type Error = XlsxError;
-    fn try_from(value: Vec<u8>) -> Result<Self, Self::Error> {
-        match value.as_slice() {
-            b"null" => Ok(STDynamicFilterType::Null),
-            b"aboveAverage" => Ok(STDynamicFilterType::AboveAverage),
-            b"belowAverage" => Ok(STDynamicFilterType::BelowAverage),
-            b"tomorrow" => Ok(STDynamicFilterType::Tomorrow),
-            b"today" => Ok(STDynamicFilterType::Today),
-            b"yesterday" => Ok(STDynamicFilterType::Yesterday),
-            b"nextWeek" => Ok(STDynamicFilterType::NextWeek),
-            b"thisWeek" => Ok(STDynamicFilterType::ThisWeek),
-            b"lastWeek" => Ok(STDynamicFilterType::LastWeek),
-            b"nextMonth" => Ok(STDynamicFilterType::NextMonth),
-            b"thisMonth" => Ok(STDynamicFilterType::ThisMonth),
-            b"lastMonth" => Ok(STDynamicFilterType::LastMonth),
-            b"nextQuarter" => Ok(STDynamicFilterType::NextQuarter),
-            b"thisQuarter" => Ok(STDynamicFilterType::ThisQuarter),
-            b"lastQuarter" => Ok(STDynamicFilterType::LastQuarter),
-            b"nextYear" => Ok(STDynamicFilterType::NextYear),
-            b"thisYear" => Ok(STDynamicFilterType::ThisYear),
-            b"lastYear" => Ok(STDynamicFilterType::LastYear),
-            b"yearToDate" => Ok(STDynamicFilterType::YearToDate),
-            b"Q1" => Ok(STDynamicFilterType::Q1),
-            b"Q2" => Ok(STDynamicFilterType::Q2),
-            b"Q3" => Ok(STDynamicFilterType::Q3),
-            b"Q4" => Ok(STDynamicFilterType::Q4),
-            b"M1" => Ok(STDynamicFilterType::M1),
-            b"M2" => Ok(STDynamicFilterType::M2),
-            b"M3" => Ok(STDynamicFilterType::M3),
-            b"M4" => Ok(STDynamicFilterType::M4),
-            b"M5" => Ok(STDynamicFilterType::M5),
-            b"M6" => Ok(STDynamicFilterType::M6),
-            b"M7" => Ok(STDynamicFilterType::M7),
-            b"M8" => Ok(STDynamicFilterType::M8),
-            b"M9" => Ok(STDynamicFilterType::M9),
-            b"M10" => Ok(STDynamicFilterType::M10),
-            b"M11" => Ok(STDynamicFilterType::M11),
-            b"M12" => Ok(STDynamicFilterType::M12),
-            v => {
-                let value = String::from_utf8_lossy(v);
-                Err(XlsxError::MissingVariant(
-                    "STDynamicFilterType".into(),
-                    value.into(),
-                ))
-            }
-        }
-    }
 }
 /// Represents the configuration for a dynamic filter.
 /// This struct corresponds to the `CT_DynamicFilter` complex type in the XML schema.
@@ -469,14 +455,26 @@ impl TryFrom<Vec<u8>> for STDynamicFilterType {
 #[derive(Debug, Default, Clone, PartialEq, XmlRead, XmlWrite)]
 struct CTDynamicFilter {
     filter_type: Vec<u8>,
-    value: Vec<u8>,
-    max_value: Vec<u8>,
+    value: Option<Vec<u8>>,
+    max_value: Option<Vec<u8>>,
 }
 impl CTDynamicFilter {
     /// Creates a new `CTDynamicFilter` with the xml schema default values.
-    fn new() -> Self {
+    fn new(filter_type: STDynamicFilterType, max_value: Option<f32>, value: Option<f32>) -> Self {
+        let value = if let Some(v) = value {
+            Some(v.to_string().to_vec())
+        } else {
+            None
+        }
+        let max_value = if let Some(v) = max_value {
+            Some(v.to_string().to_vec())
+        } else {
+            None
+        }
         Self {
-            ..Default::default()
+            filter_type,
+            max_value,
+            value,
         }
     }
 }
@@ -498,15 +496,15 @@ impl CTDynamicFilter {
 /// - `val`: The value for the filter (`ST_Xstring`), which is required to apply the filter.
 #[derive(Debug, Default, Clone, PartialEq, XmlRead, XmlWrite)]
 struct CTCustomFilter {
-    operator: Vec<u8>,
+    operator: Option<Vec<u8>>,
     val: Vec<u8>,
 }
 impl CTCustomFilter {
     /// Creates a new `CT_CustomFilter` with the xml schema default values.
-    fn new() -> Self {
+    fn new(val: &str, operator: Option<STFilterOperator>) -> Self {
         CTCustomFilter {
-            operator: b"equal".into(),
-            ..Default::default()
+            operator: operator.unwrap_or(STFilterOperator::Equal).into(),
+            val: val.into()
         }
     }
 }
