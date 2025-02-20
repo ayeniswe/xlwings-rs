@@ -28,21 +28,6 @@ use std::io::{BufRead, Write};
 ///   </restriction>
 /// </simpleType>
 /// ```
-///
-/// # Variants
-/// - `None`: Represents no calendar type.
-/// - `Gregorian`: Represents the Gregorian calendar.
-/// - `GregorianUs`: Represents the U.S. variant of the Gregorian calendar.
-/// - `Japan`: Represents the Japanese calendar.
-/// - `Taiwan`: Represents the Taiwanese calendar.
-/// - `Korea`: Represents the Korean calendar.
-/// - `Hijri`: Represents the Hijri (Islamic) calendar.
-/// - `Thai`: Represents the Thai calendar.
-/// - `Hebrew`: Represents the Hebrew (Jewish) calendar.
-/// - `GregorianMeFrench`: Represents the French variant of the Gregorian calendar.
-/// - `GregorianArabic`: Represents the Arabic variant of the Gregorian calendar.
-/// - `GregorianXlitEnglish`: Represents the English transliterated Gregorian calendar.
-/// - `GregorianXlitFrench`: Represents the French transliterated Gregorian calendar.
 #[derive(Debug, Default, Clone, PartialEq, EnumToBytes)]
 #[camel]
 pub enum STCalendarType {
@@ -79,14 +64,6 @@ pub enum STCalendarType {
 ///   </restriction>
 /// </simpleType>
 /// ```
-///
-/// # Variants
-/// - `Year`: Represents grouping by year.
-/// - `Month`: Represents grouping by month.
-/// - `Day`: Represents grouping by day.
-/// - `Hour`: Represents grouping by hour.
-/// - `Minute`: Represents grouping by minute.
-/// - `Second`: Represents grouping by second.
 #[derive(Debug, Clone, PartialEq, EnumToBytes)]
 #[camel]
 pub enum STDateTimeGrouping {
@@ -338,29 +315,6 @@ impl CTTop10 {
 ///   </restriction>
 /// </simpleType>
 /// ```
-///
-/// # Variants
-/// - `Null`: Represents no dynamic filter.
-/// - `AboveAverage`: Filters for values above the average.
-/// - `BelowAverage`: Filters for values below the average.
-/// - `Tomorrow`: Filters for tomorrow's values.
-/// - `Today`: Filters for today's values.
-/// - `Yesterday`: Filters for yesterday's values.
-/// - `NextWeek`: Filters for the upcoming week.
-/// - `ThisWeek`: Filters for this week's values.
-/// - `LastWeek`: Filters for the previous week.
-/// - `NextMonth`: Filters for the upcoming month.
-/// - `ThisMonth`: Filters for this month's values.
-/// - `LastMonth`: Filters for the previous month.
-/// - `NextQuarter`: Filters for the upcoming quarter.
-/// - `ThisQuarter`: Filters for this quarter's values.
-/// - `LastQuarter`: Filters for the previous quarter.
-/// - `NextYear`: Filters for the upcoming year.
-/// - `ThisYear`: Filters for this year's values.
-/// - `LastYear`: Filters for the previous year.
-/// - `YearToDate`: Filters from the start of the year until the current date.
-/// - `Q1`, `Q2`, `Q3`, `Q4`: Represents the quarters of the year.
-/// - `M1`, `M2`, `M3`, ..., `M12`: Represents the months of the year (from January to 
 #[derive(Debug, Clone, PartialEq, EnumToBytes)]
 pub enum STDynamicFilterType {
     #[camel] /// Represents no dynamic filter.
@@ -508,6 +462,21 @@ impl CTCustomFilter {
         }
     }
 }
+/// Represents the filter operators used in SpreadsheetML for filtering data.
+///
+/// This enum corresponds to the `ST_FilterOperator` simple type in the
+/// Office Open XML specification. Each variant specifies a type of comparison
+/// operation that can be applied during data filtering.
+#[derive(Debug, Clone, PartialEq, EnumToBytes)]
+#[camel]
+enum FilterOperator {
+    Equal,
+    GreaterThan,
+    GreaterThanOrEqual,
+    LessThan,
+    LessThanOrEqual,
+    NotEqual,
+}
 /// Represents custom filters for a filter column in a spreadsheet.
 /// This struct corresponds to the `CT_CustomFilters` complex type in the XML schema.
 /// It allows users to apply custom filters to the column, with the option to specify whether the filters are combined with an AND logic.
@@ -528,15 +497,17 @@ impl CTCustomFilter {
 /// - `and`: Whether the filters are combined using an AND logic (`false` by default).
 #[derive(Debug, Default, Clone, PartialEq, XmlRead, XmlWrite)]
 struct CTCustomFilters {
-    and_logic: bool,
+    #[xml(default_bool = false)]
+    and_logic: Option<bool>,
     #[xml(element)]
     custom_filters: Vec<CTCustomFilter>,
 }
 impl CTCustomFilters {
-    /// Creates a new `CT_CustomFilters` with xml schema default values (`and_logic` set to `false`).
-    fn new() -> Self {
+    /// Creates a new `CT_CustomFilters` with xml schema default values.
+    fn new(and_logic: Option<bool>, custom_filters: Vec<CTCustomFilter>) -> Self {
         CTCustomFilters {
-            ..Default::default()
+            and_logic,
+            custom_filters
         }
     }
 }
